@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+
+    <uses-permission android:name="android.permission.INTERNET" />
+    <!-- 复习提醒的本地通知（API 33+ 运行时申请） -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+
+    <!-- 系统云备份关闭：API 密钥密文绑定设备 keystore，换机恢复必然失败并静默降级；
+         数据备份走应用内「数据备份」（BackupManager，用户自选位置） -->
+    <application
+        android:name=".YixueApp"
+        android:allowBackup="false"
+        android:icon="@mipmap/ic_launcher"
+        android:label="@string/app_name"
+        android:roundIcon="@mipmap/ic_launcher_round"
+        android:supportsRtl="true"
+        android:theme="@style/Theme.Yixue">
+        <activity
+            android:name=".MainActivity"
+            android:exported="true"
+            android:label="@string/app_name"
+            android:theme="@style/Theme.Yixue"
+            android:windowSoftInputMode="adjustNothing">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+        <activity
+            android:name=".ui.plot.PlotViewerActivity"
+            android:exported="false"
+            android:label="@string/plot_viewer_name"
+            android:theme="@style/Theme.Yixue" />
+    </application>
+
+</manifest>

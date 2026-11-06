@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 图标前景：AI 星芒 + 翻开的书（白色，居中于自适应安全区） -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- 左页 -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M53,63 C48,60 42,58.5 33,58.5 L33,77 C42,77 48,78.5 53,81 Z" />
+    <!-- 右页 -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M55,63 C60,60 66,58.5 75,58.5 L75,77 C66,77 60,78.5 55,81 Z" />
+    <!-- 四尖星芒（AI） -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M54,25.5 C55.8,33.2 59.3,36.7 66.5,38.5 C59.3,40.3 55.8,43.8 54,51.5 C52.2,43.8 48.7,40.3 41.5,38.5 C48.7,36.7 52.2,33.2 54,25.5 Z" />
+</vector>

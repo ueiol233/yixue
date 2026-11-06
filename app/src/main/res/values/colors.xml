@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- 与 ui/theme/Color.kt 的 FdSurfaceLight / FdSurfaceDark / FdBrandLight 同源 -->
+    <color name="fd_surface_light">#FFF5F5F5</color>
+    <color name="fd_surface_dark">#FF0B0B0C</color>
+    <color name="fd_brand_blue">#FF206CFF</color>
+</resources>

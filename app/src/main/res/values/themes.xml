@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+
+    <!-- 窗口背景与 Compose 的 FdSurfaceLight 一致，避免启动/转场白闪与主题脱节 -->
+    <style name="Theme.Yixue" parent="android:Theme.Material.Light.NoActionBar">
+        <item name="android:windowBackground">@color/fd_surface_light</item>
+    </style>
+</resources>

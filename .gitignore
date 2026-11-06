@@ -1,0 +1,30 @@
+*.iml
+.gradle
+/local.properties
+/.idea/caches
+/.idea/libraries
+/.idea/modules.xml
+/.idea/workspace.xml
+/.idea/navEditor.xml
+/.idea/assetWizardSettings.xml
+.DS_Store
+/build
+/captures
+/app/release
+.externalNativeBuild
+.cxx
+local.properties
+
+# 签名密钥绝不能进仓库
+*.jks
+*.keystore
+
+# 本地工具配置目录
+/.codebuddy/
+/.idea/
+
+# 内部文档与临时产物，不随开源仓库发布
+/IP_ANALYSIS_REPORT.md
+/PROJECT_PLAN.md
+/calc/
+/down/
