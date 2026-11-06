@@ -6,6 +6,7 @@ import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
@@ -20,6 +21,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -75,6 +77,8 @@ private fun SlotView(
             .padding(horizontal = 1.dp, vertical = 1.dp)
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
+            // 空槽显示虚线占位符（MathQuill 风格），空底数/空指数一眼可见、可点击聚焦
+            if (editable && state.nodes(slot).isEmpty()) EmptySlotMark(fontSize, color)
             state.nodes(slot).forEach { node ->
                 when (node) {
                     is FText -> Text(
@@ -92,6 +96,16 @@ private fun SlotView(
             if (focused) CursorMark(fontSize, color)
         }
     }
+}
+
+@Composable
+private fun EmptySlotMark(fontSize: TextUnit, color: Color) {
+    Box(
+        modifier = Modifier
+            .padding(horizontal = 1.dp)
+            .size(width = (fontSize.value * 0.42f).dp, height = (fontSize.value * 0.68f).dp)
+            .border(1.dp, color.copy(alpha = 0.3f), RoundedCornerShape(2.dp))
+    )
 }
 
 @Composable
@@ -280,6 +294,14 @@ fun FormulaEditor(
             EditorTool("xₙ", Modifier.weight(1f)) { state.insertSub() }
             EditorTool("( )", Modifier.weight(1f)) { state.insertText("()") }
             EditorTool("⌫", Modifier.weight(1f)) { state.backspace() }
+        }
+        // 槽位导航：◀▶ 按渲染顺序在底数/指数/分子/分母等槽位间移动光标
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(top = 6.dp),
+            horizontalArrangement = Arrangement.spacedBy(6.dp)
+        ) {
+            EditorTool("◀", Modifier.weight(1f)) { state.moveFocus(-1) }
+            EditorTool("▶", Modifier.weight(1f)) { state.moveFocus(1) }
         }
 
         // 键盘分页

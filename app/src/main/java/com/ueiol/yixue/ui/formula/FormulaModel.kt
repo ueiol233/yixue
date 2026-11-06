@@ -12,6 +12,9 @@ enum class FormulaOutput { LATEX, EXPRESSION }
 /** 幂 / 下标底数的提取粒度：这些函数名整体作为底数（如 sin²）。 */
 private val SCRIPT_UNIT_FUNCTIONS = listOf("sin", "cos", "tan", "cot", "sec", "csc", "ln", "log")
 
+/** 指数 / 下标槽的角色标记（insertText 里输入运算符时据此跳出）。 */
+private const val ROLE_SCRIPT = "script"
+
 /**
  * 从 [text] 尾部取出「上一个输入单元」作为幂 / 下标的底数，返回 <剩余文本, 底数单元>。
  * 优先级：函数名整体 > 平衡括号组（(x+1)）> 单个字符。
@@ -35,6 +38,8 @@ private fun splitTailUnit(text: String): Pair<String, String> {
             }
         }
     }
+    // 运算符不作底数（如输入 y= 后按 xʸ），底数留空由预览区显示占位符
+    if (last in "+-−=×÷·,:;") return text to ""
     return text.dropLast(1) to last.toString()
 }
 
@@ -69,6 +74,9 @@ class FormulaState {
     /** 槽位 → 所属父槽位，用于退格回到上一层。 */
     private val slotParent = mutableMapOf<Int, Int>()
 
+    /** 槽位角色：指数/下标槽（输入运算符时跳出，见 insertText）。 */
+    private val slotRole = mutableMapOf<Int, String>()
+
     var focused by mutableIntStateOf(0)
         private set
 
@@ -80,8 +88,41 @@ class FormulaState {
 
     fun focus(slot: Int) { focused = slot }
 
+    /** 按渲染顺序深度优先收集所有槽位，供 ◀▶ 在槽位间移动光标。 */
+    fun slotOrder(): List<Int> {
+        val out = mutableListOf<Int>()
+        fun walk(slot: Int) {
+            out.add(slot)
+            nodes(slot).forEach { node ->
+                when (node) {
+                    is FDiv -> { walk(node.numSlot); walk(node.denSlot) }
+                    is FPow -> { walk(node.baseSlot); walk(node.expSlot) }
+                    is FSub -> { walk(node.baseSlot); walk(node.subSlot) }
+                    is FSqrt -> walk(node.bodySlot)
+                    is FText -> {}
+                }
+            }
+        }
+        walk(root)
+        return out
+    }
+
+    /** ◀▶：在渲染顺序的槽位间移动光标，边界处停住。 */
+    fun moveFocus(delta: Int) {
+        val order = slotOrder()
+        val idx = order.indexOf(focused)
+        if (idx == -1) return
+        focused = order[(idx + delta).coerceIn(order.indices)]
+    }
+
     fun insertText(s: String) {
         if (s.isEmpty()) return
+        // MathQuill「charsThatBreakOutOfSupSub」模式：在指数/下标里输入 + - = 自动跳出，
+        // 让 x^2 后接 +1 写成 x^{2}+1，而不是 x^{2+1}
+        if (s.length == 1 && s[0] in "+-−=" && slotRole[focused] == ROLE_SCRIPT) {
+            val parent = slotParent[focused] ?: return
+            focused = parent
+        }
         val list = nodes(focused)
         val last = list.lastOrNull()
         if (last is FText) list[list.size - 1] = FText(last.text + s)
@@ -91,8 +132,14 @@ class FormulaState {
     fun backspace() {
         val list = nodes(focused)
         if (list.isEmpty()) {
-            val parent = slotParent[focused]
-            if (parent != null) focused = parent
+            val parent = slotParent[focused] ?: return
+            // 空槽：回到父槽；所属结构整体为空则连结构一起删（常见公式键盘行为）
+            val node = nodes(parent).firstOrNull { focused in childSlots(it) }
+            if (node != null && childSlots(node).all { nodes(it).isEmpty() }) {
+                nodes(parent).remove(node)
+                removeStructureState(node)
+            }
+            focused = parent
             return
         }
         val last = list.last()
@@ -101,8 +148,37 @@ class FormulaState {
                 if (last.text.length <= 1) list.removeAt(list.size - 1)
                 else list[list.size - 1] = FText(last.text.dropLast(1))
             }
-            else -> list.removeAt(list.size - 1)
+            else -> {
+                // 删除结构节点：纯文本底数/主体退回原位，避免连内容一起删掉
+                list.removeAt(list.size - 1)
+                inlineTextOf(last)?.let { list.add(it) }
+                removeStructureState(last)
+            }
         }
+    }
+
+    private fun childSlots(node: FNode): List<Int> = when (node) {
+        is FDiv -> listOf(node.numSlot, node.denSlot)
+        is FPow -> listOf(node.baseSlot, node.expSlot)
+        is FSub -> listOf(node.baseSlot, node.subSlot)
+        is FSqrt -> listOf(node.bodySlot)
+        is FText -> emptyList()
+    }
+
+    /** 结构节点的底数/主体若是单个非空文本，退格删除结构时原样退回。 */
+    private fun inlineTextOf(node: FNode): FText? {
+        val slot = when (node) {
+            is FPow -> node.baseSlot
+            is FSub -> node.baseSlot
+            is FSqrt -> node.bodySlot
+            else -> return null
+        }
+        val l = nodes(slot)
+        return (l.singleOrNull() as? FText)?.takeIf { it.text.isNotEmpty() }
+    }
+
+    private fun removeStructureState(node: FNode) {
+        childSlots(node).forEach { slots.remove(it); slotParent.remove(it); slotRole.remove(it) }
     }
 
     /** 插入分数线结构，聚焦分子。 */
@@ -130,6 +206,7 @@ class FormulaState {
         slots[script] = mutableStateListOf()
         slotParent[base] = focused
         slotParent[script] = focused
+        slotRole[script] = ROLE_SCRIPT
         val list = nodes(focused)
         when (val last = list.lastOrNull()) {
             is FText -> {
@@ -165,6 +242,7 @@ class FormulaState {
         nextId = 1
         slots.clear()
         slotParent.clear()
+        slotRole.clear()
         slots[0] = mutableStateListOf()
         focused = 0
     }

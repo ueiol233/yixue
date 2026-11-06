@@ -190,6 +190,81 @@ class FormulaLatexTest {
         assertEquals("a{n}_{1}", s.toLatex())
     }
 
+    /** 运算符不作底数：y= 后按 xʸ，底数留空占位。 */
+    @Test
+    fun operatorIsNotLiftedAsBase() {
+        val s = FormulaState()
+        s.insertText("y=")
+        s.insertPow()
+        assertEquals("y={}^{}", s.toLatex())
+    }
+
+    /** MathQuill charsThatBreakOutOfSupSub：指数里输入 + 跳出，得 x²+1 而非 x^{2+1}。 */
+    @Test
+    fun plusBreaksOutOfExponent() {
+        val s = FormulaState()
+        s.insertText("x")
+        s.insertPow()
+        s.insertText("2")
+        s.insertText("+")
+        s.insertText("1")
+        assertEquals("{x}^{2}+1", s.toLatex())
+    }
+
+    /** 误按 xʸ 的撤销：第一次退格从空指数回根槽（结构保留），第二次删结构并退回底数。 */
+    @Test
+    fun backspaceRemovesEmptyStructure() {
+        val s = FormulaState()
+        s.insertText("y=x")
+        s.insertPow()
+        s.backspace() // 指数为空但底数有 x → 结构保留，光标回根槽位
+        assertEquals("y={x}^{}", s.toLatex())
+        s.backspace() // 删整个幂结构，底数 x 退回
+        assertEquals("y=x", s.toLatex())
+    }
+
+    /** 空底数 + 空指数的结构一次退格即整体消失。 */
+    @Test
+    fun backspaceRemovesFullyEmptyStructure() {
+        val s = FormulaState()
+        s.insertText("y=")
+        s.insertPow()
+        s.backspace()
+        assertEquals("y=", s.toLatex())
+    }
+
+    /** 删除结构时纯文本底数退回原位：x² 连按三次退格回到 x。 */
+    @Test
+    fun backspaceInlinesTextBase() {
+        val s = FormulaState()
+        s.insertText("x")
+        s.insertPow()
+        s.insertText("2")
+        s.backspace() // 删指数里的 2
+        s.backspace() // 空指数 → 回根槽，结构非空（底数有 x）保留
+        s.backspace() // 删整个幂结构，底数 x 退回
+        assertEquals("x", s.toLatex())
+    }
+
+    /** ◀▶ 按渲染顺序在槽位间移动：指数 → 底数 → 根槽位，根槽位处停住。 */
+    @Test
+    fun moveFocusNavigatesRenderOrder() {
+        val s = FormulaState()
+        s.insertText("x")
+        s.insertPow()
+        val exp = s.focused
+        s.moveFocus(-1)
+        val base = s.focused
+        s.moveFocus(-1)
+        assertEquals(0, s.focused)
+        s.moveFocus(-1)
+        assertEquals(0, s.focused)
+        s.moveFocus(1)
+        assertEquals(base, s.focused)
+        s.moveFocus(1)
+        assertEquals(exp, s.focused)
+    }
+
     @Test
     fun plotParserStripsLeadingYEquals() {
         val spec = PlotParser.parseLines(listOf("y=x^2", "y = x^2", "f(x)=x^2"))
