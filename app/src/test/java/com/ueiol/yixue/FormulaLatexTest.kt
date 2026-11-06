@@ -118,6 +118,78 @@ class FormulaLatexTest {
         assertEquals(9.0, fn(3.0), 1e-9)
     }
 
+    /** 用户按键序列 y = x → xʸ → 2：只有末字符 x 抬为底数，而不是整个 y=x。 */
+    @Test
+    fun powLiftsOnlyLastChar() {
+        val s = FormulaState()
+        s.insertText("y")
+        s.insertText("=")
+        s.insertText("x")
+        s.insertPow()
+        s.insertText("2")
+        assertEquals("y={x}^{2}", s.toLatex())
+        // 函数图场景：去掉 y= 后必须可编译求值
+        val fn = ExpressionParser.compile(s.toExpression().removePrefix("y="))
+        assertEquals(4.0, fn(2.0), 1e-9)
+    }
+
+    /** 括号组整体抬为底数：(x+1) → xʸ → 2 = (x+1)²。 */
+    @Test
+    fun powLiftsBalancedBracketGroup() {
+        val s = FormulaState()
+        s.insertText("(x+1)")
+        s.insertPow()
+        s.insertText("2")
+        assertEquals("{(x+1)}^{2}", s.toLatex())
+        val fn = ExpressionParser.compile(s.toExpression())
+        assertEquals(9.0, fn(2.0), 1e-9)
+    }
+
+    /** 函数名整体抬为底数：sin → xʸ → 2 = sin²（FPow 模板恒为 {底}^{指}）。 */
+    @Test
+    fun powLiftsFunctionName() {
+        val s = FormulaState()
+        s.insertText("sin")
+        s.insertPow()
+        s.insertText("2")
+        assertEquals("{sin}^{2}", s.toLatex())
+    }
+
+    /** 在指数槽内继续按 xʸ：作用于指数槽的最后一个单元，得 x^{2^3}。 */
+    @Test
+    fun powInsideExponentNests() {
+        val s = FormulaState()
+        s.insertText("x")
+        s.insertPow()
+        s.insertText("2")
+        s.insertPow()
+        s.insertText("3")
+        assertEquals("{x}^{{2}^{3}}", s.toLatex())
+    }
+
+    /** 结构节点整体抬为底数：回到根槽位后再按 xʸ，得 (x²)³。 */
+    @Test
+    fun powLiftsWholeStructureNode() {
+        val s = FormulaState()
+        s.insertText("x")
+        s.insertPow()
+        s.insertText("2")
+        s.focus(0)
+        s.insertPow()
+        s.insertText("3")
+        assertEquals("{{x}^{2}}^{3}", s.toLatex())
+    }
+
+    /** 下标与幂同规则：an → xₙ → 1 = a 下标 n。 */
+    @Test
+    fun subLiftsOnlyLastChar() {
+        val s = FormulaState()
+        s.insertText("an")
+        s.insertSub()
+        s.insertText("1")
+        assertEquals("a{n}_{1}", s.toLatex())
+    }
+
     @Test
     fun plotParserStripsLeadingYEquals() {
         val spec = PlotParser.parseLines(listOf("y=x^2", "y = x^2", "f(x)=x^2"))

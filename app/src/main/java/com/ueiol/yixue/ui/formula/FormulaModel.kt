@@ -9,6 +9,35 @@ import androidx.compose.runtime.setValue
 /** 可视化公式的输出形式：LaTeX 文本，或可直接计算的表达式（函数图用）。 */
 enum class FormulaOutput { LATEX, EXPRESSION }
 
+/** 幂 / 下标底数的提取粒度：这些函数名整体作为底数（如 sin²）。 */
+private val SCRIPT_UNIT_FUNCTIONS = listOf("sin", "cos", "tan", "cot", "sec", "csc", "ln", "log")
+
+/**
+ * 从 [text] 尾部取出「上一个输入单元」作为幂 / 下标的底数，返回 <剩余文本, 底数单元>。
+ * 优先级：函数名整体 > 平衡括号组（(x+1)）> 单个字符。
+ */
+private fun splitTailUnit(text: String): Pair<String, String> {
+    if (text.isEmpty()) return "" to ""
+    for (fn in SCRIPT_UNIT_FUNCTIONS) {
+        if (text.endsWith(fn)) return text.dropLast(fn.length) to fn
+    }
+    val last = text.last()
+    if (last == ')' || last == ']') {
+        val open = if (last == ')') '(' else '['
+        var depth = 0
+        for (i in text.length - 1 downTo 0) {
+            when (text[i]) {
+                last -> depth++
+                open -> {
+                    depth--
+                    if (depth == 0) return text.substring(0, i) to text.substring(i)
+                }
+            }
+        }
+    }
+    return text.dropLast(1) to last.toString()
+}
+
 /** 公式结构节点（可视化编辑用）。 */
 sealed interface FNode
 
@@ -88,40 +117,39 @@ class FormulaState {
         focused = num
     }
 
-    /** 插入幂：把前一个文本节点抬为底数，聚焦指数。 */
-    fun insertPow() {
-        val base = nextId++
-        val exp = nextId++
-        slots[base] = mutableStateListOf()
-        slots[exp] = mutableStateListOf()
-        slotParent[base] = focused
-        slotParent[exp] = focused
-        val list = nodes(focused)
-        val last = list.lastOrNull()
-        if (last is FText) {
-            list.removeAt(list.size - 1)
-            slots[base]!!.add(last)
-        }
-        list.add(FPow(base, exp))
-        focused = exp
-    }
+    /** 插入幂：把上一个输入单元（单字符 / 括号组 / 函数名 / 结构节点）抬为底数，聚焦指数。 */
+    fun insertPow() = insertScript { base, exp -> FPow(base, exp) }
 
-    /** 插入下标：把前一个文本节点抬为底数，聚焦下标。 */
-    fun insertSub() {
+    /** 插入下标：底数提取规则与幂一致。 */
+    fun insertSub() = insertScript { base, sub -> FSub(base, sub) }
+
+    private fun insertScript(create: (Int, Int) -> FNode) {
         val base = nextId++
-        val sub = nextId++
+        val script = nextId++
         slots[base] = mutableStateListOf()
-        slots[sub] = mutableStateListOf()
+        slots[script] = mutableStateListOf()
         slotParent[base] = focused
-        slotParent[sub] = focused
+        slotParent[script] = focused
         val list = nodes(focused)
-        val last = list.lastOrNull()
-        if (last is FText) {
-            list.removeAt(list.size - 1)
-            slots[base]!!.add(last)
+        when (val last = list.lastOrNull()) {
+            is FText -> {
+                // 只抬最后一个输入单元（如 y=x 只抬 x），整个文本节点抬走会变成 {y=x}^{2}
+                val (rest, unit) = splitTailUnit(last.text)
+                if (unit.isNotEmpty()) slots[base]!!.add(FText(unit))
+                if (rest.isEmpty()) list.removeAt(list.size - 1)
+                else list[list.size - 1] = FText(rest)
+            }
+            null -> {
+                // 空槽：底数留空，聚焦指数后可直接输入
+            }
+            else -> {
+                // 前一个是结构节点（已有的幂 / 分数 / 根号），整体抬为底数
+                list.removeAt(list.size - 1)
+                slots[base]!!.add(last)
+            }
         }
-        list.add(FSub(base, sub))
-        focused = sub
+        list.add(create(base, script))
+        focused = script
     }
 
     /** 插入根号，聚焦根号内。 */
