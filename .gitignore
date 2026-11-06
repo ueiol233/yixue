@@ -23,6 +23,9 @@ local.properties
 /.codebuddy/
 /.idea/
 
+# 编译计数器（每台机器各自递增，不入库）
+/version.properties
+
 # 内部文档与临时产物，不随开源仓库发布
 /IP_ANALYSIS_REPORT.md
 /PROJECT_PLAN.md

@@ -1,5 +1,7 @@
 package com.ueiol.yixue.ui.profile
 
+import android.content.Intent
+import android.net.Uri
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -14,6 +16,7 @@ import androidx.compose.material.icons.outlined.Api
 import androidx.compose.material.icons.outlined.Backup
 import androidx.compose.material.icons.outlined.History
 import androidx.compose.material.icons.outlined.Insights
+import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material.icons.outlined.Notifications
 import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material.icons.outlined.School
@@ -30,6 +33,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import com.ueiol.yixue.BuildConfig
 import com.ueiol.yixue.YixueApp
 import com.ueiol.yixue.ui.common.YxCard
 import com.ueiol.yixue.ui.common.YxLargeTitle
@@ -83,9 +87,27 @@ fun ProfilePage(
                     subtitle = "导出 / 恢复全部学习数据", onClick = onOpenBackup
                 )
                 ReminderRow()
+                VersionRow()
             }
         }
     }
+}
+
+/** 版本信息：版本号 / build 号（每次编译 +1）/ 编译时间，点击打开 GitHub 项目主页。 */
+@Composable
+private fun VersionRow() {
+    val context = LocalContext.current
+    SettingsRow(
+        icon = Icons.Outlined.Info,
+        title = "版本信息",
+        subtitle = "v1.0 · Build ${BuildConfig.BUILD_NUMBER} · ${BuildConfig.BUILD_TIME}" +
+            if (BuildConfig.GIT_COMMIT != "dev") " · ${BuildConfig.GIT_COMMIT}" else "",
+        onClick = {
+            runCatching {
+                context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(BuildConfig.REPO_URL)))
+            }
+        }
+    )
 }
 
 /** 复习提醒开关：读写 SettingsStore 的独立偏好，后台 Worker 每日检查前会读取。 */

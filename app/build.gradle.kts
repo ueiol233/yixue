@@ -1,3 +1,7 @@
+import java.time.LocalDateTime
+import java.time.format.DateTimeFormatter
+import java.util.Properties
+
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.android)
@@ -5,6 +9,23 @@ plugins {
     alias(libs.plugins.kotlin.kapt)
     alias(libs.plugins.kotlin.serialization)
 }
+
+// ---------- 版本信息：build 号每次编译 +1（version.properties，不入库）、编译时间、git 提交号 ----------
+val versionPropsFile = rootProject.file("version.properties")
+val versionProps = Properties().apply {
+    if (versionPropsFile.exists()) versionPropsFile.inputStream().use { load(it) }
+}
+val buildNumber = (versionProps.getProperty("buildNumber")?.toIntOrNull() ?: 1).also { n ->
+    versionProps.setProperty("buildNumber", (n + 1).toString())
+    versionPropsFile.outputStream().use { versionProps.store(it, "yixue build counter (auto-increment per build)") }
+}
+val buildTime = LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm"))
+val gitCommit = try {
+    providers.exec { commandLine("git", "rev-parse", "--short", "HEAD") }.standardOutput.asText.get().trim()
+} catch (_: Exception) {
+    "dev"
+}
+val repoUrl = "https://github.com/ueiol233/yixue"
 
 android {
     namespace = "com.ueiol.yixue"
@@ -14,8 +35,14 @@ android {
         applicationId = "com.ueiol.yixue"
         minSdk = 24
         targetSdk = 36
-        versionCode = 1
+        // versionCode 随编译递增，直接用 build 号
+        versionCode = buildNumber
         versionName = "1.0"
+
+        buildConfigField("int", "BUILD_NUMBER", buildNumber.toString())
+        buildConfigField("String", "BUILD_TIME", "\"$buildTime\"")
+        buildConfigField("String", "GIT_COMMIT", "\"$gitCommit\"")
+        buildConfigField("String", "REPO_URL", "\"$repoUrl\"")
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
@@ -46,6 +73,7 @@ android {
     }
     buildFeatures {
         compose = true
+        buildConfig = true
     }
 }
 
