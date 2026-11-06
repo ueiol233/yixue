@@ -2,6 +2,11 @@
 
 一个基于 AI 的学习助手 Android 应用。围绕「对话提问 → 出题练习 → 错题巩固 → 复习记忆」的学习闭环设计：
 
+| 截图 | |
+|---|---|
+| ![AI 对话出题](screenshots/chat-quiz.png) | ![笔记与函数图](screenshots/note-plot.png) |
+| ![答题卡](screenshots/quiz-card.png) | ![全局搜索](screenshots/global-search.png) |
+
 - **AI 对话**：流式回复，支持图片提问、函数图像、表格渲染；AI 可调用工具直接生成测验、写入笔记、检索教材原文
 - **教材导入**：导入 PDF / Word 教材，自动分块；「与我使用的教材完全一致」模式下 AI 讲解基于教材原文
 - **测验与错题本**：AI 出题、本地判分 + AI 复核；错题自动归档，支持 AI 精讲、错题重练、间隔复习提醒
