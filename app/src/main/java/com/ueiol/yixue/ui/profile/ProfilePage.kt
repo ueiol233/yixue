@@ -101,7 +101,8 @@ private fun VersionRow() {
         icon = Icons.Outlined.Info,
         title = "版本信息",
         subtitle = "v1.0 · Build ${BuildConfig.BUILD_NUMBER} · ${BuildConfig.BUILD_TIME}" +
-            if (BuildConfig.GIT_COMMIT != "dev") " · ${BuildConfig.GIT_COMMIT}" else "",
+            (if (BuildConfig.GIT_COMMIT != "dev") " · ${BuildConfig.GIT_COMMIT}" else "") +
+            "\n点击打开 GitHub 项目主页 ↗",
         onClick = {
             runCatching {
                 context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(BuildConfig.REPO_URL)))
