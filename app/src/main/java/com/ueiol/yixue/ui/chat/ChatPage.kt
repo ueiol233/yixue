@@ -80,6 +80,7 @@ import com.ueiol.yixue.ui.navigation.LocalScaffoldPadding
 import com.ueiol.yixue.ui.plot.PlotViewerActivity
 import com.ueiol.yixue.ui.theme.YxSheetShape
 import com.ueiol.yixue.ui.theme.YxRadius
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
 import java.io.File
 
@@ -135,6 +136,21 @@ fun ChatPage(
         }
     }
 
+    // 全局搜索跳转：滚到指定消息并短暂高亮（延迟清除避免常驻色块）
+    val scrollTarget by vm.scrollToMessage.collectAsState()
+    var highlightMessageId by remember { mutableStateOf<Long?>(null) }
+    LaunchedEffect(scrollTarget, messages) {
+        val target = scrollTarget ?: return@LaunchedEffect
+        val idx = messages.indexOfFirst { it.id == target }
+        if (idx >= 0) {
+            listState.scrollToItem(idx)
+            highlightMessageId = target
+            vm.consumeScrollToMessage()
+            delay(2500)
+            highlightMessageId = null
+        }
+    }
+
     // 底部 Tab 栏间距已由外层 Scaffold/NavHost 扣掉，这里只补「键盘高度 - 已扣掉的底部间距」，
     // 否则键盘收起时会多出一段空白
     val imeBottom = WindowInsets.ime.asPaddingValues().calculateBottomPadding()
@@ -170,12 +186,20 @@ fun ChatPage(
                 verticalArrangement = Arrangement.spacedBy(10.dp)
             ) {
                 items(messages, key = { it.id }) { msg ->
-                    MessageBubble(
-                        msg = msg,
-                        quiz = msg.quizId?.let { quizSummaries[it] },
-                        onOpenQuiz = onOpenQuiz,
-                        onOpenResult = onOpenResult
-                    )
+                    val highlighted = msg.id == highlightMessageId
+                    Box(
+                        modifier = if (highlighted) Modifier.background(
+                            MaterialTheme.colorScheme.primaryContainer,
+                            RoundedCornerShape(12.dp)
+                        ) else Modifier
+                    ) {
+                        MessageBubble(
+                            msg = msg,
+                            quiz = msg.quizId?.let { quizSummaries[it] },
+                            onOpenQuiz = onOpenQuiz,
+                            onOpenResult = onOpenResult
+                        )
+                    }
                 }
                 toolActivity?.let { activity ->
                     item(key = "tool") { ToolActivityRow(activity) }

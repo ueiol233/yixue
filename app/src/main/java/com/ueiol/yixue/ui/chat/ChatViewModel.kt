@@ -186,6 +186,21 @@ class ChatViewModel(
         _currentSessionId.value = id
     }
 
+    // ---------- 全局搜索跳转：滚到指定消息并短暂高亮 ----------
+
+    private val _scrollToMessage = MutableStateFlow<Long?>(null)
+    val scrollToMessage: StateFlow<Long?> = _scrollToMessage
+
+    /** 全局搜索点中某条对话消息后调用：切换会话 + 请求滚动定位。 */
+    fun requestScrollToMessage(id: Long) {
+        _scrollToMessage.value = id
+    }
+
+    /** ChatPage 完成滚动后消费掉，避免切回该会话时重复滚动。 */
+    fun consumeScrollToMessage() {
+        _scrollToMessage.value = null
+    }
+
     /** 交卷报告：挂到输入框上方作为"附件"，由用户确认后再发送。 */
     private val _pendingReport = MutableStateFlow<String?>(null)
     val pendingReport: StateFlow<String?> = _pendingReport

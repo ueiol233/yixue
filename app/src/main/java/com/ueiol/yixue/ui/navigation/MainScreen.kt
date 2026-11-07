@@ -40,10 +40,12 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
 import androidx.navigation.NavDestination.Companion.hierarchy
+import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
+import androidx.navigation.navArgument
 import com.ueiol.yixue.ui.chat.ChatPage
 import com.ueiol.yixue.ui.chat.ChatViewModel
 import com.ueiol.yixue.ui.chat.SessionListPage
@@ -77,8 +79,9 @@ object Routes {
     const val BACKUP = "settings/backup"
     const val STATS = "settings/stats"
     const val SEARCH = "search"
-    const val NOTE_EDIT = "note/{id}"
-    fun noteEdit(id: Long) = "note/$id"
+    const val NOTE_EDIT = "note/{id}?offset={offset}&len={len}"
+    // offset/len：全局搜索命中的绝对偏移与长度（-1 表示普通打开，不定位）
+    fun noteEdit(id: Long, offset: Int = -1, len: Int = 0) = "note/$id?offset=$offset&len=$len"
     const val QUIZ_SHEET = "quiz/{id}"
     const val QUIZ_RESULT = "quizResult/{id}"
     const val QUIZ_HISTORY = "quizHistory"
@@ -216,10 +219,24 @@ fun MainScreen(openWrong: Boolean = false) {
                 val nbVm = com.ueiol.yixue.ui.notebook.NotebookViewModel.create()
                 NotebookPage(vm = nbVm, onOpenNote = { id -> navController.navigate(Routes.noteEdit(id)) })
             }
-            composable(Routes.NOTE_EDIT) { entry ->
-                val id = entry.arguments?.getString("id")?.toLongOrNull() ?: 0L
+            composable(
+                Routes.NOTE_EDIT,
+                arguments = listOf(
+                    navArgument("id") { type = NavType.LongType },
+                    navArgument("offset") { type = NavType.IntType; defaultValue = -1 },
+                    navArgument("len") { type = NavType.IntType; defaultValue = 0 }
+                )
+            ) { entry ->
+                val id = entry.arguments?.getLong("id") ?: 0L
+                val jumpOffset = entry.arguments?.getInt("offset") ?: -1
+                val jumpLen = entry.arguments?.getInt("len") ?: 0
                 val editorVm = com.ueiol.yixue.ui.notebook.NoteEditorViewModel.create(id)
-                com.ueiol.yixue.ui.notebook.NoteEditorPage(vm = editorVm, onBack = { navController.popBackStack() })
+                com.ueiol.yixue.ui.notebook.NoteEditorPage(
+                    vm = editorVm,
+                    onBack = { navController.popBackStack() },
+                    jumpOffset = jumpOffset,
+                    jumpLen = jumpLen
+                )
             }
             composable(Routes.PROFILE) {
                 ProfilePage(
@@ -239,10 +256,13 @@ fun MainScreen(openWrong: Boolean = false) {
             composable(Routes.SEARCH) {
                 com.ueiol.yixue.ui.search.GlobalSearchPage(
                     onBack = { navController.popBackStack() },
-                    onOpenNote = { id -> navController.navigate(Routes.noteEdit(id)) },
-                    onOpenSession = { id ->
-                        // 跳回对话 tab 并切换到命中消息所在会话
-                        chatVm.selectSession(id)
+                    onOpenNote = { id, offset, len ->
+                        navController.navigate(Routes.noteEdit(id, offset, len))
+                    },
+                    onOpenSession = { sessionId, messageId ->
+                        // 跳回对话 tab，切换会话并滚动定位到命中消息
+                        chatVm.selectSession(sessionId)
+                        chatVm.requestScrollToMessage(messageId)
                         navController.navigate(Routes.CHAT) {
                             popUpTo(Routes.CHAT) { inclusive = false }
                             launchSingleTop = true

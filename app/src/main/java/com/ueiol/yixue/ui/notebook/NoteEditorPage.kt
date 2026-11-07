@@ -39,6 +39,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -47,6 +48,8 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.font.FontWeight
@@ -54,11 +57,8 @@ import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.unit.dp
 import com.ueiol.yixue.ui.common.YxLargeTitle
 import com.ueiol.yixue.ui.common.YxActionChip
-import com.ueiol.yixue.ui.common.YxLargeTitle
 import com.ueiol.yixue.ui.common.MarkdownBlock
-import com.ueiol.yixue.ui.common.YxLargeTitle
 import com.ueiol.yixue.ui.common.PlotInputDialog
-import com.ueiol.yixue.ui.common.YxLargeTitle
 import com.ueiol.yixue.ui.formula.FormulaEditorDialog
 import com.ueiol.yixue.ui.common.YxLargeTitle
 import com.ueiol.yixue.ui.theme.YxExt
@@ -69,6 +69,8 @@ import kotlinx.coroutines.launch
 fun NoteEditorPage(
     vm: NoteEditorViewModel,
     onBack: () -> Unit,
+    jumpOffset: Int = -1,
+    jumpLen: Int = 0,
     modifier: Modifier = Modifier
 ) {
     val title by vm.title.collectAsState()
@@ -78,8 +80,20 @@ fun NoteEditorPage(
     val scope = rememberCoroutineScope()
     val focusManager = LocalFocusManager.current
 
-    // 打开已有笔记先看预览，点正文才进入编辑；新建笔记直接进编辑
-    var preview by remember { mutableStateOf(vm.noteId > 0) }
+    // 全局搜索跳转：直接进编辑态并选中命中处（TextField 会把光标滚入视野）
+    var jumpSelection by remember { mutableStateOf<TextRange?>(null) }
+    val jumpFocusRequester = remember { FocusRequester() }
+    LaunchedEffect(content, jumpOffset) {
+        if (jumpSelection == null && jumpOffset >= 0 && content.isNotEmpty()) {
+            val end = minOf(content.length, jumpOffset + jumpLen.coerceAtLeast(0))
+            val start = jumpOffset.coerceIn(0, content.length)
+            jumpSelection = TextRange(start, end)
+            jumpFocusRequester.requestFocus()
+        }
+    }
+
+    // 打开已有笔记先看预览，点正文才进入编辑；新建/搜索跳转直接进编辑
+    var preview by remember { mutableStateOf(vm.noteId > 0 && jumpOffset < 0) }
     var showFormulaDialog by remember { mutableStateOf(false) }
     // 非空表示正在编辑预览里点中的那条公式
     var editingLatex by remember { mutableStateOf<String?>(null) }
@@ -162,10 +176,18 @@ fun NoteEditorPage(
             }
         } else {
             OutlinedTextField(
-                value = TextFieldValue(content, selection = TextRange(content.length)),
-                onValueChange = { vm.onContentChange(it.text) },
+                value = jumpSelection?.let { TextFieldValue(content, selection = it) }
+                    ?: TextFieldValue(content, selection = TextRange(content.length)),
+                onValueChange = {
+                    vm.onContentChange(it.text)
+                    jumpSelection = null
+                },
                 placeholder = { Text("Markdown 内容…") },
-                modifier = Modifier.weight(1f).fillMaxWidth().padding(horizontal = 16.dp)
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp)
+                    .focusRequester(jumpFocusRequester)
             )
         }
     }

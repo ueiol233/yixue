@@ -1,5 +1,6 @@
 package com.ueiol.yixue.ui.search
 
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -127,13 +128,14 @@ class GlobalSearchViewModel(
 }
 
 /**
- * 全局搜索：同时检索笔记、对话消息、试卷题干、教材正文，点击结果跳转到对应位置。
+ * 全局搜索：同时检索笔记、对话消息、试卷题干、教材正文；
+ * 每处命中单独一行展示，点击某一行直接跳转并滚动到对应位置。
  */
 @Composable
 fun GlobalSearchPage(
     onBack: () -> Unit,
-    onOpenNote: (Long) -> Unit,
-    onOpenSession: (Long) -> Unit,
+    onOpenNote: (noteId: Long, matchOffset: Int, matchLen: Int) -> Unit,
+    onOpenSession: (sessionId: Long, messageId: Long) -> Unit,
     onOpenQuiz: (Long) -> Unit,
     modifier: Modifier = Modifier
 ) {
@@ -188,46 +190,58 @@ fun GlobalSearchPage(
                     if (r.notes.isNotEmpty()) {
                         item { SectionHeader("笔记 · ${r.notes.size}") }
                         items(r.notes, key = { "n${it.id}" }) { note ->
+                            val (rows, total) = hitRows(note.contentMarkdown, q, maxRows = 5)
                             ResultCard(
                                 title = note.title.ifBlank { "无标题笔记" },
-                                snippets = snippetRows(stripMd(note.contentMarkdown), q, maxRows = 3),
+                                rows = rows,
+                                total = total,
                                 query = q,
                                 time = formatShortTime(note.updatedAt),
-                                onClick = { onOpenNote(note.id) }
+                                onOpen = { onOpenNote(note.id, rows.firstOrNull()?.offset ?: 0, rows.firstOrNull()?.len ?: 0) },
+                                onOpenOccurrence = { row -> onOpenNote(note.id, row.offset, row.len) }
                             )
                         }
                     }
                     if (r.messages.isNotEmpty()) {
                         item { SectionHeader("对话 · ${r.messages.size}") }
                         items(r.messages, key = { "m${it.id}" }) { hit ->
+                            val (rows, total) = hitRows(hit.content, q, maxRows = 5)
                             ResultCard(
                                 title = hit.sessionTitle,
-                                snippets = snippetRows(stripMd(hit.content), q, maxRows = 3),
+                                rows = rows,
+                                total = total,
                                 query = q,
                                 time = formatShortTime(hit.createdAt),
-                                onClick = { onOpenSession(hit.sessionId) }
+                                onOpen = { onOpenSession(hit.sessionId, hit.id) },
+                                onOpenOccurrence = { _ -> onOpenSession(hit.sessionId, hit.id) }
                             )
                         }
                     }
                     if (r.questions.isNotEmpty()) {
                         item { SectionHeader("题目 · ${r.questions.size}") }
                         items(r.questions, key = { "q${it.id}" }) { hit ->
+                            val (rows, total) = hitRows(hit.stem, q, maxRows = 1)
                             ResultCard(
                                 title = "题目",
-                                snippets = snippetRows(stripMd(hit.stem), q, maxRows = 1),
+                                rows = rows,
+                                total = total,
                                 query = q,
-                                onClick = { onOpenQuiz(hit.quizId) }
+                                onOpen = { onOpenQuiz(hit.quizId) },
+                                onOpenOccurrence = { _ -> onOpenQuiz(hit.quizId) }
                             )
                         }
                     }
                     if (r.textbooks.isNotEmpty()) {
                         item { SectionHeader("教材 · ${r.textbooks.size}") }
                         items(r.textbooks, key = { "t${it.textbookId}-${it.seq}" }) { hit ->
+                            val (rows, total) = hitRows(hit.content, q, maxRows = 3)
                             ResultCard(
                                 title = hit.textbookTitle + if (hit.page > 0) " · 第${hit.page}页" else "",
-                                snippets = snippetRows(hit.content, q, maxRows = 2),
+                                rows = rows,
+                                total = total,
                                 query = q,
-                                onClick = { previewTextbook = hit }
+                                onOpen = { previewTextbook = hit },
+                                onOpenOccurrence = { _ -> previewTextbook = hit }
                             )
                         }
                     }
@@ -280,27 +294,46 @@ private fun SectionHeader(text: String) {
 @Composable
 private fun ResultCard(
     title: String,
-    snippets: List<String>,
+    rows: List<SearchHitRow>,
+    total: Int,
     query: String,
     time: String? = null,
-    onClick: () -> Unit
+    onOpen: () -> Unit,
+    onOpenOccurrence: (SearchHitRow) -> Unit
 ) {
     val highlightColor = MaterialTheme.colorScheme.primary
-    YxCard(onClick = onClick) {
+    YxCard(onClick = onOpen) {
         Column(modifier = Modifier.padding(14.dp)) {
+            // 标题里的关键词同样高亮
             Text(
-                title,
+                highlight(title, query, highlightColor),
                 style = MaterialTheme.typography.titleSmall,
                 color = MaterialTheme.colorScheme.onSurface,
                 maxLines = 1
             )
             Spacer(Modifier.height(4.dp))
-            // 每次出现一行「…命中上下文…」，关键词高亮
-            snippets.forEachIndexed { i, row ->
+            // 每处命中一行「…前后文…」，行级可点击 → 跳转并定位到该处
+            rows.forEachIndexed { i, row ->
                 if (i > 0) Spacer(Modifier.height(3.dp))
                 Text(
-                    highlight(row, query, highlightColor),
+                    highlight(row.text, query, highlightColor),
                     style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = if (total > 1) {
+                        Modifier
+                            .fillMaxWidth()
+                            .clickable { onOpenOccurrence(row) }
+                            .padding(vertical = 2.dp)
+                    } else {
+                        Modifier
+                    }
+                )
+            }
+            if (total > rows.size) {
+                Spacer(Modifier.height(3.dp))
+                Text(
+                    "…共 $total 处命中",
+                    style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
@@ -316,35 +349,49 @@ private fun ResultCard(
     }
 }
 
-/** 去掉常见 Markdown 符号，便于摘要展示。 */
-private fun stripMd(raw: String): String =
-    raw.replace(Regex("[$#>`*\\[\\]()]"), "").replace(Regex("\\s+"), " ").trim()
+/** 一行命中摘要：显示文本 + 命中在原文中的绝对偏移与长度（定位用）。 */
+data class SearchHitRow(val text: String, val offset: Int, val len: Int)
+
+/** 展示用轻清理：去掉会干扰阅读的 Markdown 标记，保留括号等数学符号。 */
+private fun displayClean(s: String): String =
+    s.replace(Regex("[$#>`*]"), "").replace(Regex("\\s+"), " ").trim()
 
 /**
- * 摘要：每次出现生成一行以命中位置为中心的上下文（最多 [maxRows] 行），
- * 重叠窗口自动合并；完全没命中时退化为开头一段。
+ * 摘要：在**原文**中逐处统计命中（保证偏移与后续定位一致），
+ * 每处生成一行以命中位置为中心的上下文（最多 [maxRows] 行），返回 <行列表, 命中总数>。
+ * 完全没命中（如仅标题命中）时退化为开头一段。
  */
-private fun snippetRows(content: String, query: String, maxRows: Int = 3, width: Int = 110): List<String> {
-    if (content.isBlank()) return emptyList()
-    if (query.isBlank()) return listOf(content.take(width) + if (content.length > width) "…" else "")
-    val lower = content.lowercase()
+private fun hitRows(raw: String, query: String, maxRows: Int = 5, width: Int = 110): Pair<List<SearchHitRow>, Int> {
+    if (raw.isBlank() || query.isBlank()) {
+        val head = displayClean(raw.take(width))
+        return (if (head.isBlank()) emptyList() else listOf(SearchHitRow(head, 0, 0))) to 0
+    }
+    val lower = raw.lowercase()
     val q = query.lowercase()
-    val rows = mutableListOf<String>()
+    val rows = mutableListOf<SearchHitRow>()
     var from = 0
-    while (rows.size < maxRows) {
+    var total = 0
+    while (true) {
         val idx = lower.indexOf(q, from)
         if (idx < 0) break
-        val start = maxOf(0, idx - width / 3)
-        val end = minOf(content.length, idx + q.length + width - width / 3)
-        val prefix = if (start > 0) "…" else ""
-        val suffix = if (end < content.length) "…" else ""
-        rows += prefix + content.substring(start, end) + suffix
-        from = end
+        if (rows.size < maxRows) {
+            val start = maxOf(0, idx - width / 3)
+            val end = minOf(raw.length, idx + q.length + width - width / 3)
+            val prefix = if (start > 0) "…" else ""
+            val suffix = if (end < raw.length) "…" else ""
+            rows += SearchHitRow(
+                prefix + displayClean(raw.substring(start, end)) + suffix,
+                idx, q.length
+            )
+        }
+        total++
+        from = idx + q.length
     }
-    if (rows.isEmpty()) {
-        rows += content.take(width) + if (content.length > width) "…" else ""
+    if (total == 0) {
+        val head = displayClean(raw.take(width))
+        if (head.isNotBlank()) rows += SearchHitRow(head, 0, 0)
     }
-    return rows
+    return rows to total
 }
 
 /** 关键词高亮（大小写不敏感）。 */
