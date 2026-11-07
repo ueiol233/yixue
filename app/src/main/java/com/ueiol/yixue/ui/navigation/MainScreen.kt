@@ -177,6 +177,7 @@ fun MainScreen(openWrong: Boolean = false) {
                 ChatPage(
                     vm = chatVm,
                     onOpenSessions = { navController.navigate(Routes.SESSIONS) },
+                    onOpenSearch = { navController.navigate(Routes.SEARCH) },
                     onOpenQuiz = { id -> navController.navigate(Routes.quizSheet(id)) },
                     onOpenResult = { id -> navController.navigate(Routes.quizResult(id)) }
                 )
@@ -244,7 +245,6 @@ fun MainScreen(openWrong: Boolean = false) {
                     onOpenSubjects = { navController.navigate(Routes.SUBJECTS) },
                     onOpenQuizHistory = { navController.navigate(Routes.QUIZ_HISTORY) },
                     onOpenBackup = { navController.navigate(Routes.BACKUP) },
-                    onOpenSearch = { navController.navigate(Routes.SEARCH) },
                     onOpenStats = { navController.navigate(Routes.STATS) }
                 )
             }

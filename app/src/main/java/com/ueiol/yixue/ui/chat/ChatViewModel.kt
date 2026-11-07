@@ -3,6 +3,7 @@ package com.ueiol.yixue.ui.chat
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.net.Uri
+import android.provider.OpenableColumns
 import android.util.Base64
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
@@ -237,13 +238,16 @@ class ChatViewModel(
 
     // ---------- 图片附件（视觉提问） ----------
 
-    private val _pendingImage = MutableStateFlow<String?>(null)
-    val pendingImage: StateFlow<String?> = _pendingImage
+    /** 待发送附件：气泡展示用（文件名 + 压缩后的 data URL），后续贴文件沿用此结构。 */
+    data class PendingAttachment(val name: String, val dataUrl: String)
+
+    private val _pendingImage = MutableStateFlow<PendingAttachment?>(null)
+    val pendingImage: StateFlow<PendingAttachment?> = _pendingImage
 
     fun attachImage(uri: Uri) {
         viewModelScope.launch {
             try {
-                val dataUrl = withContext(Dispatchers.IO) {
+                val attached = withContext(Dispatchers.IO) {
                     val bytes = app.contentResolver.openInputStream(uri)?.use { it.readBytes() }
                         ?: return@withContext null
                     // 量尺寸 → 按最长边 1280 降采样 → JPEG 85% 压缩：
@@ -260,13 +264,23 @@ class ChatViewModel(
                     val out = ByteArrayOutputStream()
                     bitmap.compress(Bitmap.CompressFormat.JPEG, 85, out)
                     bitmap.recycle()
-                    "data:image/jpeg;base64," + Base64.encodeToString(out.toByteArray(), Base64.NO_WRAP)
+                    val name = queryDisplayName(uri) ?: "图片.jpg"
+                    PendingAttachment(name, "data:image/jpeg;base64," + Base64.encodeToString(out.toByteArray(), Base64.NO_WRAP))
                 }
-                if (dataUrl != null) _pendingImage.value = dataUrl
+                if (attached != null) _pendingImage.value = attached
             } catch (t: Throwable) {
                 _error.value = "图片读取失败：${t.message ?: "未知错误"}"
             }
         }
+    }
+
+    /** 附件气泡展示用：取内容 Uri 的显示文件名，取不到返回 null。 */
+    private fun queryDisplayName(uri: Uri): String? = try {
+        app.contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use { c ->
+            if (c.moveToFirst()) c.getString(0) else null
+        }
+    } catch (t: Throwable) {
+        null
     }
 
     fun clearPendingImage() { _pendingImage.value = null }
@@ -295,7 +309,7 @@ class ChatViewModel(
             try {
                 val sessionId = _currentSessionId.value ?: repo.createSession()
                     .also { _currentSessionId.value = it }
-                val images = if (externalImages.isEmpty()) listOfNotNull(_pendingImage.value) else externalImages
+                val images = if (externalImages.isEmpty()) listOfNotNull(_pendingImage.value?.dataUrl) else externalImages
                 _pendingImage.value = null
                 _pendingReport.value = null
                 repo.addUserMessage(sessionId, body, images)

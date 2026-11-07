@@ -18,6 +18,8 @@ import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
@@ -151,6 +153,56 @@ fun YxActionChip(
                 color = MaterialTheme.colorScheme.onSurface,
                 maxLines = 1
             )
+        }
+    }
+}
+
+/**
+ * Yx 附件气泡：主题色胶囊 + 左侧预览/图标槽 + 名称 + 右侧移除叉。
+ * 输入框的所有可挂附件（图片 / 答题报告 / 未来的文件）统一用它，保证视觉一致。
+ */
+@Composable
+fun YxAttachmentBubble(
+    title: String,
+    modifier: Modifier = Modifier,
+    onRemove: (() -> Unit)? = null,
+    leading: @Composable () -> Unit
+) {
+    Surface(
+        color = MaterialTheme.colorScheme.primaryContainer,
+        shape = RoundedCornerShape(percent = 50),
+        modifier = modifier.height(36.dp)
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxHeight()
+                .padding(start = 4.dp, end = if (onRemove != null) 6.dp else 12.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            leading()
+            Spacer(modifier = Modifier.size(8.dp))
+            Text(
+                text = title,
+                style = MaterialTheme.typography.labelLarge,
+                color = MaterialTheme.colorScheme.onPrimaryContainer,
+                maxLines = 1
+            )
+            onRemove?.let {
+                Spacer(modifier = Modifier.size(2.dp))
+                Box(
+                    modifier = Modifier
+                        .size(24.dp)
+                        .clickable { it() },
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        imageVector = Icons.Outlined.Close,
+                        contentDescription = "移除附件",
+                        tint = MaterialTheme.colorScheme.onPrimaryContainer,
+                        modifier = Modifier.size(14.dp)
+                    )
+                }
+            }
         }
     }
 }

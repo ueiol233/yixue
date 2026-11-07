@@ -40,6 +40,7 @@ import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.Functions
 import androidx.compose.material.icons.outlined.History
 import androidx.compose.material.icons.outlined.Image
+import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material.icons.outlined.Tune
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.ui.window.Dialog
@@ -60,6 +61,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.text.TextRange
@@ -73,6 +76,7 @@ import com.ueiol.yixue.ui.common.FunctionPlot
 import com.ueiol.yixue.ui.common.PlotParser
 import com.ueiol.yixue.ui.common.PlotInputDialog
 import com.ueiol.yixue.ui.common.YxActionChip
+import com.ueiol.yixue.ui.common.YxAttachmentBubble
 import com.ueiol.yixue.ui.common.YxLargeTitle
 import com.ueiol.yixue.ui.common.MarkdownBlock
 import com.ueiol.yixue.ui.formula.FormulaEditorDialog
@@ -89,6 +93,7 @@ import java.io.File
 fun ChatPage(
     vm: ChatViewModel,
     onOpenSessions: () -> Unit,
+    onOpenSearch: () -> Unit = {},
     onOpenQuiz: (Long) -> Unit,
     onOpenResult: (Long) -> Unit = {},
     modifier: Modifier = Modifier
@@ -162,6 +167,9 @@ fun ChatPage(
             .padding(bottom = extraBottom)
     ) {
         YxLargeTitle(title = "易学", actions = {
+            IconButton(onClick = onOpenSearch) {
+                Icon(Icons.Outlined.Search, contentDescription = "全局搜索", tint = MaterialTheme.colorScheme.onSurface)
+            }
             IconButton(onClick = onOpenSessions) {
                 Icon(Icons.Outlined.History, contentDescription = "历史会话", tint = MaterialTheme.colorScheme.onSurface)
             }
@@ -479,59 +487,56 @@ private fun ChatInputBar(
 
     Surface(color = MaterialTheme.colorScheme.surfaceContainerLowest) {
         Column(modifier = Modifier.fillMaxWidth()) {
-            // 交卷报告以“附件”形式挂在输入框上方，可移除，发送时自动并入消息
-            pendingReport?.let { report ->
+            // 附件气泡区：答题报告 / 图片（未来的文件同格式），胶囊统一视觉，可单独移除
+            if (pendingReport != null || pendingImage != null) {
                 Row(
-                    modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 6.dp),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .horizontalScroll(rememberScrollState())
+                        .padding(horizontal = 16.dp, vertical = 6.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Box(
-                        modifier = Modifier
-                            .size(32.dp)
-                            .background(MaterialTheme.colorScheme.primaryContainer, CircleShape),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Icon(
-                            Icons.Outlined.Functions,
-                            contentDescription = null,
-                            modifier = Modifier.size(18.dp),
-                            tint = MaterialTheme.colorScheme.primary
+                    pendingReport?.let {
+                        YxAttachmentBubble(
+                            title = "答题报告",
+                            onRemove = { vm.clearPendingReport() },
+                            leading = {
+                                Box(
+                                    modifier = Modifier
+                                        .size(28.dp)
+                                        .background(
+                                            MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.12f),
+                                            CircleShape
+                                        ),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Icon(
+                                        Icons.Outlined.Functions,
+                                        contentDescription = null,
+                                        modifier = Modifier.size(14.dp),
+                                        tint = MaterialTheme.colorScheme.onPrimaryContainer
+                                    )
+                                }
+                            }
                         )
                     }
-                    Spacer(Modifier.size(8.dp))
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(
-                            text = "答题报告",
-                            style = MaterialTheme.typography.labelLarge,
-                            color = MaterialTheme.colorScheme.onSurface
+                    pendingImage?.let { img ->
+                        YxAttachmentBubble(
+                            title = img.name,
+                            onRemove = { vm.clearPendingImage() },
+                            leading = {
+                                AsyncImage(
+                                    model = img.dataUrl,
+                                    contentDescription = "待发送图片",
+                                    contentScale = ContentScale.Crop,
+                                    modifier = Modifier
+                                        .padding(start = 4.dp)
+                                        .size(28.dp)
+                                        .clip(RoundedCornerShape(8.dp))
+                                )
+                            }
                         )
-                        Text(
-                            text = report.lineSequence().firstOrNull()?.take(32)?.plus("…") ?: "",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            maxLines = 1
-                        )
-                    }
-                    IconButton(onClick = { vm.clearPendingReport() }) {
-                        Icon(
-                            Icons.Outlined.Close,
-                            contentDescription = "移除答题报告",
-                            tint = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                }
-            }
-            pendingImage?.let { url ->
-                Row(
-                    modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 6.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    AsyncImage(model = url, contentDescription = "待发送图片", modifier = Modifier.size(56.dp))
-                    Spacer(Modifier.size(8.dp))
-                    Text("已附加图片", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    Spacer(Modifier.weight(1f))
-                    IconButton(onClick = { vm.clearPendingImage() }) {
-                        Icon(Icons.Outlined.Close, contentDescription = "移除图片", tint = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                 }
             }

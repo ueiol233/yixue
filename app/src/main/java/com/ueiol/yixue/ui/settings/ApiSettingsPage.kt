@@ -234,16 +234,18 @@ fun ApiSettingsPage(onBack: () -> Unit, modifier: Modifier = Modifier) {
                 SettingsField("最大回复长度（token，自动保存）", maxTokens) { maxTokens = it }
 
                 if (e.id != saved.activeProviderId) {
-                    YxPill(
-                        text = "设为当前使用",
-                        primary = true,
-                        height = 40.dp,
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        saveEditing()
-                        store.setActiveProvider(e.id)
-                        message = "已切换到「${e.name}」"
-                    }
+                    Text(
+                        "设为当前使用",
+                        style = MaterialTheme.typography.labelLarge,
+                        color = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier
+                            .clickable {
+                                saveEditing()
+                                store.setActiveProvider(e.id)
+                                message = "已切换到「${e.name}」"
+                            }
+                            .padding(vertical = 12.dp)
+                    )
                 }
                 Text(
                     "删除此接口",

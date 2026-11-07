@@ -18,10 +18,8 @@ import androidx.compose.material.icons.outlined.History
 import androidx.compose.material.icons.outlined.Insights
 import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material.icons.outlined.Notifications
-import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material.icons.outlined.School
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
@@ -47,23 +45,11 @@ fun ProfilePage(
     onOpenSubjects: () -> Unit = {},
     onOpenQuizHistory: () -> Unit = {},
     onOpenBackup: () -> Unit = {},
-    onOpenSearch: () -> Unit = {},
     onOpenStats: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     Column(modifier = modifier.fillMaxSize()) {
-        YxLargeTitle(
-            title = "我的",
-            actions = {
-                IconButton(onClick = onOpenSearch) {
-                    Icon(
-                        Icons.Outlined.Search,
-                        contentDescription = "全局搜索",
-                        tint = MaterialTheme.colorScheme.onSurface
-                    )
-                }
-            }
-        )
+        YxLargeTitle(title = "我的")
         Column(modifier = Modifier.padding(horizontal = 16.dp)) {
             SettingsCard {
                 SettingsRow(
