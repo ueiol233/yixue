@@ -78,6 +78,7 @@ object Routes {
     const val SUBJECTS = "settings/subjects"
     const val BACKUP = "settings/backup"
     const val STATS = "settings/stats"
+    const val DOC_LIBRARY = "settings/documents"
     const val SEARCH = "search"
     const val NOTE_EDIT = "note/{id}?offset={offset}&len={len}"
     // offset/len：全局搜索命中的绝对偏移与长度（-1 表示普通打开，不定位）
@@ -243,6 +244,7 @@ fun MainScreen(openWrong: Boolean = false) {
                 ProfilePage(
                     onOpenApiSettings = { navController.navigate(Routes.API_SETTINGS) },
                     onOpenSubjects = { navController.navigate(Routes.SUBJECTS) },
+                    onOpenDocLibrary = { navController.navigate(Routes.DOC_LIBRARY) },
                     onOpenQuizHistory = { navController.navigate(Routes.QUIZ_HISTORY) },
                     onOpenBackup = { navController.navigate(Routes.BACKUP) },
                     onOpenStats = { navController.navigate(Routes.STATS) }
@@ -253,6 +255,9 @@ fun MainScreen(openWrong: Boolean = false) {
             composable(Routes.SUBJECTS) { com.ueiol.yixue.ui.settings.SubjectsPage(onBack = { navController.popBackStack() }) }
             composable(Routes.BACKUP) { com.ueiol.yixue.ui.settings.BackupPage(onBack = { navController.popBackStack() }) }
             composable(Routes.STATS) { com.ueiol.yixue.ui.stats.StatsPage(onBack = { navController.popBackStack() }) }
+            composable(Routes.DOC_LIBRARY) {
+                com.ueiol.yixue.ui.settings.DocumentLibraryPage(onBack = { navController.popBackStack() })
+            }
             composable(Routes.SEARCH) {
                 com.ueiol.yixue.ui.search.GlobalSearchPage(
                     onBack = { navController.popBackStack() },

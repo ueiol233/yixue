@@ -129,7 +129,7 @@ fun BackupPage(
                     )
                     Spacer(Modifier.height(6.dp))
                     Text(
-                        "对话与消息、笔记本、测验与作答记录、错题本、科目与教材、AI 接口配置，笔记图片随包携带。",
+                        "对话与消息、笔记本、测验与作答记录、错题本、科目与教材、文档库、AI 接口配置，笔记图片与文档随包携带。",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )

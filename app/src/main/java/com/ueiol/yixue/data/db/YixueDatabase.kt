@@ -18,9 +18,11 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         WrongQuestionEntity::class,
         NoteEntity::class,
         TextbookEntity::class,
-        TextbookChunkEntity::class
+        TextbookChunkEntity::class,
+        AttachmentEntity::class,
+        SessionAttachmentEntity::class
     ],
-    version = 2,
+    version = 3,
     exportSchema = true
 )
 abstract class YixueDatabase : RoomDatabase() {
@@ -33,6 +35,7 @@ abstract class YixueDatabase : RoomDatabase() {
     abstract fun wrongQuestionDao(): WrongQuestionDao
     abstract fun noteDao(): NoteDao
     abstract fun textbookDao(): TextbookDao
+    abstract fun attachmentDao(): AttachmentDao
 
     companion object {
         /** v2：新增教材表与教材分块表（不清空用户已有数据）。 */
@@ -68,11 +71,45 @@ abstract class YixueDatabase : RoomDatabase() {
             }
         }
 
+        /** v3：新增对话文档库两张表（文档元信息 + 会话绑定）。 */
+        private val MIGRATION_2_3 = object : Migration(2, 3) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS `attachments` (
+                        `id` TEXT NOT NULL,
+                        `name` TEXT NOT NULL,
+                        `mime` TEXT NOT NULL,
+                        `type` TEXT NOT NULL,
+                        `size` INTEGER NOT NULL,
+                        `unitCount` INTEGER NOT NULL,
+                        `status` TEXT NOT NULL,
+                        `errorMsg` TEXT,
+                        `createdAt` INTEGER NOT NULL,
+                        PRIMARY KEY(`id`)
+                    )
+                    """.trimIndent()
+                )
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS `session_attachments` (
+                        `sessionId` INTEGER NOT NULL,
+                        `attachmentId` TEXT NOT NULL,
+                        `boundAt` INTEGER NOT NULL,
+                        PRIMARY KEY(`sessionId`, `attachmentId`)
+                    )
+                    """.trimIndent()
+                )
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_session_attachments_sessionId` ON `session_attachments` (`sessionId`)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_session_attachments_attachmentId` ON `session_attachments` (`attachmentId`)")
+            }
+        }
+
         // 不用 fallbackToDestructiveMigration：缺迁移时直接崩溃，把问题暴露在开发期，
         // 而不是静默清空用户的对话/笔记/错题数据
         fun build(context: Context): YixueDatabase =
             Room.databaseBuilder(context, YixueDatabase::class.java, "yixue.db")
-                .addMigrations(MIGRATION_1_2)
+                .addMigrations(MIGRATION_1_2, MIGRATION_2_3)
                 .build()
     }
 }

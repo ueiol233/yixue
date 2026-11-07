@@ -185,3 +185,38 @@ data class TextbookChunkEntity(
     val page: Int,
     val content: String
 )
+
+/**
+ * 对话文档库：用户上传的 Word / PPT / Excel / PDF。
+ * 文件本体全局只存一份（files/attachments/{id}/），通过 session_attachments 按会话绑定引用。
+ */
+@Entity(tableName = "attachments")
+@kotlinx.serialization.Serializable
+data class AttachmentEntity(
+    // att_ 前缀字符串 ID，同时是存储目录名
+    @PrimaryKey val id: String,
+    val name: String,
+    val mime: String,
+    // DOCX / PPTX / XLSX / PDF
+    val type: String,
+    val size: Long,
+    // 分页单位数：Word=内容块，PPT=幻灯片，Excel=工作表，PDF=页
+    val unitCount: Int,
+    // PROCESSING / READY / FAILED
+    val status: String,
+    val errorMsg: String? = null,
+    val createdAt: Long
+)
+
+/** 会话 ↔ 文档绑定（多对多）：解绑不删文件，删除会话时级联清理。 */
+@Entity(
+    tableName = "session_attachments",
+    primaryKeys = ["sessionId", "attachmentId"],
+    indices = [Index("sessionId"), Index("attachmentId")]
+)
+@kotlinx.serialization.Serializable
+data class SessionAttachmentEntity(
+    val sessionId: Long,
+    val attachmentId: String,
+    val boundAt: Long
+)

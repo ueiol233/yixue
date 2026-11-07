@@ -17,6 +17,7 @@ import androidx.compose.material.icons.outlined.Backup
 import androidx.compose.material.icons.outlined.History
 import androidx.compose.material.icons.outlined.Insights
 import androidx.compose.material.icons.outlined.Info
+import androidx.compose.material.icons.outlined.Description
 import androidx.compose.material.icons.outlined.Notifications
 import androidx.compose.material.icons.outlined.School
 import androidx.compose.material3.Icon
@@ -43,6 +44,7 @@ import com.ueiol.yixue.ui.common.YxLargeTitle
 fun ProfilePage(
     onOpenApiSettings: () -> Unit = {},
     onOpenSubjects: () -> Unit = {},
+    onOpenDocLibrary: () -> Unit = {},
     onOpenQuizHistory: () -> Unit = {},
     onOpenBackup: () -> Unit = {},
     onOpenStats: () -> Unit = {},
@@ -67,6 +69,10 @@ fun ProfilePage(
                 SettingsRow(
                     icon = Icons.Outlined.School, title = "科目管理",
                     subtitle = "科目分类与教材导入，AI 按教材原文讲解", onClick = onOpenSubjects
+                )
+                SettingsRow(
+                    icon = Icons.Outlined.Description, title = "文档库",
+                    subtitle = "上传的 Word / PPT / Excel / PDF，对话中供 AI 查阅", onClick = onOpenDocLibrary
                 )
                 SettingsRow(
                     icon = Icons.Outlined.Backup, title = "数据备份",

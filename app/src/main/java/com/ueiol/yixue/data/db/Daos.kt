@@ -433,6 +433,82 @@ interface TextbookDao {
     suspend fun searchChunksGlobal(q: String, limit: Int = 8): List<TextbookHit>
 }
 
+@Dao
+interface AttachmentDao {
+    @Query("SELECT * FROM attachments ORDER BY createdAt DESC")
+    fun observeAll(): Flow<List<AttachmentEntity>>
+
+    @Query("SELECT * FROM attachments WHERE id = :id")
+    suspend fun getById(id: String): AttachmentEntity?
+
+    @Query("SELECT * FROM attachments WHERE id IN (:ids)")
+    suspend fun getByIds(ids: List<String>): List<AttachmentEntity>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insert(attachment: AttachmentEntity)
+
+    @Update
+    suspend fun update(attachment: AttachmentEntity)
+
+    @Query("DELETE FROM attachments WHERE id = :id")
+    suspend fun delete(id: String)
+
+    @Query("SELECT * FROM attachments")
+    suspend fun getAll(): List<AttachmentEntity>
+
+    @Query("DELETE FROM attachments")
+    suspend fun clearAll()
+
+    @Query("SELECT * FROM session_attachments")
+    suspend fun getAllBindings(): List<SessionAttachmentEntity>
+
+    @Query("DELETE FROM session_attachments")
+    suspend fun clearAllBindings()
+
+    // ---------- 会话绑定 ----------
+
+    @Query("SELECT * FROM session_attachments WHERE sessionId = :sessionId ORDER BY boundAt ASC")
+    fun observeBySession(sessionId: Long): Flow<List<SessionAttachmentEntity>>
+
+    /** 会话绑定的文档（按绑定时间正序）。 */
+    @Query(
+        """
+        SELECT a.* FROM attachments a
+        JOIN session_attachments sa ON sa.attachmentId = a.id
+        WHERE sa.sessionId = :sessionId
+        ORDER BY sa.boundAt ASC
+        """
+    )
+    suspend fun getBySession(sessionId: Long): List<AttachmentEntity>
+
+    /** 会话绑定文档的实时 Flow（输入框胶囊区用）。 */
+    @Query(
+        """
+        SELECT a.* FROM attachments a
+        JOIN session_attachments sa ON sa.attachmentId = a.id
+        WHERE sa.sessionId = :sessionId
+        ORDER BY sa.boundAt ASC
+        """
+    )
+    fun observeAttachmentsOfSession(sessionId: Long): Flow<List<AttachmentEntity>>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun bind(binding: SessionAttachmentEntity)
+
+    @Query("DELETE FROM session_attachments WHERE sessionId = :sessionId AND attachmentId = :attachmentId")
+    suspend fun unbind(sessionId: Long, attachmentId: String)
+
+    @Query("DELETE FROM session_attachments WHERE sessionId = :sessionId")
+    suspend fun unbindAllForSession(sessionId: Long)
+
+    @Query("DELETE FROM session_attachments WHERE attachmentId = :attachmentId")
+    suspend fun unbindAllForAttachment(attachmentId: String)
+
+    /** 文档被多少个会话引用（删除时判断是否可清文件）。 */
+    @Query("SELECT COUNT(*) FROM session_attachments WHERE attachmentId = :attachmentId")
+    suspend fun boundSessionCount(attachmentId: String): Int
+}
+
 /** 全局搜索投影（查询专用，非表）。 */
 
 /** 对话消息命中：联会话取标题。 */

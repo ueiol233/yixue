@@ -43,11 +43,18 @@ class ChatRepository(
     suspend fun historyMessages(sessionId: Long): List<MessageEntity> =
         messageDao.observeBySession(sessionId).first()
 
-    suspend fun addUserMessage(sessionId: Long, text: String, images: List<String> = emptyList()) {
+    suspend fun addUserMessage(
+        sessionId: Long,
+        text: String,
+        images: List<String> = emptyList(),
+        // 文档引用（"doc:{id}|{name}|{type}" 格式），随消息存档供聊天气泡徽标展示
+        docRefs: List<String> = emptyList()
+    ) {
+        val all = images + docRefs
         messageDao.insert(
             MessageEntity(
                 sessionId = sessionId, role = "user", content = text,
-                attachmentsJson = if (images.isEmpty()) null else AppJson.encodeToString(StringListSerializer, images),
+                attachmentsJson = if (all.isEmpty()) null else AppJson.encodeToString(StringListSerializer, all),
                 createdAt = System.currentTimeMillis()
             )
         )
@@ -74,10 +81,19 @@ class ChatRepository(
         }
     }
 
-    /** 消息附带的图片（data URL 列表）。 */
+    /** 消息附带的图片（data URL 列表；过滤掉 doc: 前缀的文档引用）。 */
     fun attachmentsOf(msg: MessageEntity): List<String> =
         msg.attachmentsJson?.let {
             runCatching { AppJson.decodeFromString(StringListSerializer, it) }.getOrDefault(emptyList())
+        }?.filterNot { it.startsWith("doc:") } ?: emptyList()
+
+    /** 消息引用的文档（"doc:{id}|{name}|{type}"，聊天气泡徽标用）。 */
+    fun docRefsOf(msg: MessageEntity): List<Triple<String, String, String>> =
+        msg.attachmentsJson?.let {
+            runCatching { AppJson.decodeFromString(StringListSerializer, it) }.getOrDefault(emptyList())
+        }?.filter { it.startsWith("doc:") }?.map { entry ->
+            val parts = entry.removePrefix("doc:").split('|')
+            Triple(parts.getOrElse(0) { "" }, parts.getOrElse(1) { "文档" }, parts.getOrElse(2) { "" })
         } ?: emptyList()
 
     suspend fun touchSession(sessionId: Long) {

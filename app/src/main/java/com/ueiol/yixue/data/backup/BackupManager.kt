@@ -4,10 +4,12 @@ import android.content.Context
 import android.net.Uri
 import com.ueiol.yixue.data.AppContainer
 import com.ueiol.yixue.data.db.AnswerRecordEntity
+import com.ueiol.yixue.data.db.AttachmentEntity
 import com.ueiol.yixue.data.db.MessageEntity
 import com.ueiol.yixue.data.db.NoteEntity
 import com.ueiol.yixue.data.db.QuestionEntity
 import com.ueiol.yixue.data.db.QuizEntity
+import com.ueiol.yixue.data.db.SessionAttachmentEntity
 import com.ueiol.yixue.data.db.SessionEntity
 import com.ueiol.yixue.data.db.SubjectEntity
 import com.ueiol.yixue.data.db.TextbookChunkEntity
@@ -49,7 +51,7 @@ data class BackupSettings(
 /** 备份文件内容：全部 Room 数据 + AI 接口配置（无密钥）。 */
 @Serializable
 data class BackupData(
-    val schemaVersion: Int = 1,
+    val schemaVersion: Int = 2,
     val exportedAt: Long,
     val subjects: List<SubjectEntity> = emptyList(),
     val sessions: List<SessionEntity> = emptyList(),
@@ -61,6 +63,9 @@ data class BackupData(
     val notes: List<NoteEntity> = emptyList(),
     val textbooks: List<TextbookEntity> = emptyList(),
     val textbookChunks: List<TextbookChunkEntity> = emptyList(),
+    // v2：对话文档库
+    val attachments: List<AttachmentEntity> = emptyList(),
+    val sessionAttachments: List<SessionAttachmentEntity> = emptyList(),
     val settings: BackupSettings? = null
 )
 
@@ -72,14 +77,15 @@ data class BackupStats(
     val quizzes: Int,
     val notes: Int,
     val textbooks: Int,
-    val pictures: Int
+    val pictures: Int,
+    val documents: Int = 0
 ) {
     override fun toString(): String =
-        "科目 $subjects · 会话 $sessions · 消息 $messages · 试卷 $quizzes · 笔记 $notes · 教材 $textbooks · 图片 $pictures"
+        "科目 $subjects · 会话 $sessions · 消息 $messages · 试卷 $quizzes · 笔记 $notes · 教材 $textbooks · 图片 $pictures · 文档 $documents"
 }
 
 /**
- * 数据备份：ZIP = backup.json（全部 Room 表 + 接口配置）+ pictures/（笔记图片）。
+ * 数据备份：ZIP = backup.json（全部 Room 表 + 接口配置）+ pictures/（笔记图片）+ attachments/（文档库）。
  * 导出用 SAF（ACTION_CREATE_DOCUMENT），导入覆盖式恢复（先清库再重灌，保持原 ID）。
  */
 class BackupManager(
@@ -102,6 +108,8 @@ class BackupManager(
             notes = container.noteDao.getAll(),
             textbooks = container.textbookDao.getAll(),
             textbookChunks = container.textbookDao.getAllChunks(),
+            attachments = container.attachmentDao.getAll(),
+            sessionAttachments = container.attachmentDao.getAllBindings(),
             settings = BackupSettings(
                 temperature = settings.temperature,
                 maxTokens = settings.maxTokens,
@@ -114,6 +122,9 @@ class BackupManager(
         val json = AppJson.encodeToString(data)
         val picturesDir = File(app.filesDir, PICTURES_DIR)
         val pictureFiles = picturesDir.listFiles()?.filter { it.isFile }.orEmpty()
+        // 文档库目录：attachments/{attId}/{source|extracted.txt|index.json}
+        val attachmentsDir = File(app.filesDir, ATTACHMENTS_DIR)
+        val attachmentFiles = attachmentsDir.walkTopDown().filter { it.isFile }.toList()
 
         app.contentResolver.openOutputStream(uri)?.use { raw ->
             ZipOutputStream(raw.buffered()).use { zip ->
@@ -122,6 +133,12 @@ class BackupManager(
                 zip.closeEntry()
                 pictureFiles.forEach { file ->
                     zip.putNextEntry(ZipEntry("$PICTURES_DIR/${file.name}"))
+                    file.inputStream().use { it.copyTo(zip) }
+                    zip.closeEntry()
+                }
+                attachmentFiles.forEach { file ->
+                    val rel = file.relativeToOrNull(attachmentsDir)?.path ?: return@forEach
+                    zip.putNextEntry(ZipEntry("$ATTACHMENTS_DIR/$rel"))
                     file.inputStream().use { it.copyTo(zip) }
                     zip.closeEntry()
                 }
@@ -134,14 +151,17 @@ class BackupManager(
             quizzes = data.quizzes.size,
             notes = data.notes.size,
             textbooks = data.textbooks.size,
-            pictures = pictureFiles.size
+            pictures = pictureFiles.size,
+            documents = data.attachments.size
         )
     }
 
     suspend fun importFrom(uri: Uri): Result<BackupStats> = runCatching {
         var json: String? = null
         var pictures = 0
+        var documents = 0
         val picturesDir = File(app.filesDir, PICTURES_DIR).apply { mkdirs() }
+        val attachmentsDir = File(app.filesDir, ATTACHMENTS_DIR).apply { mkdirs() }
         app.contentResolver.openInputStream(uri)?.use { raw ->
             ZipInputStream(raw.buffered()).use { zip ->
                 while (true) {
@@ -153,6 +173,17 @@ class BackupManager(
                             val target = File(picturesDir, File(entry.name).name)
                             target.outputStream().use { zip.copyTo(it) }
                             pictures++
+                        }
+                        entry.name.startsWith("$ATTACHMENTS_DIR/") && !entry.isDirectory -> {
+                            // attachments/{attId}/{file}：按相对路径还原，防路径穿越只保留名字层级
+                            val rel = entry.name.removePrefix("$ATTACHMENTS_DIR/")
+                                .split('/', '\\').filter { it.isNotEmpty() && it != ".." }.joinToString(File.separator)
+                            if (rel.isNotEmpty()) {
+                                val target = File(attachmentsDir, rel)
+                                target.parentFile?.mkdirs()
+                                target.outputStream().use { zip.copyTo(it) }
+                                documents++
+                            }
                         }
                     }
                     zip.closeEntry()
@@ -178,6 +209,8 @@ class BackupManager(
             container.noteDao.clearAll()
             container.textbookDao.clearChunks()
             container.textbookDao.clearAll()
+            container.attachmentDao.clearAllBindings()
+            container.attachmentDao.clearAll()
             container.sessionDao.clearAll()
             container.subjectDao.clearAll()
 
@@ -195,6 +228,8 @@ class BackupManager(
             data.answerRecords.forEach { container.answerRecordDao.insert(it) }
             data.wrongQuestions.forEach { container.wrongQuestionDao.insert(it) }
             data.messages.forEach { container.messageDao.insert(it) }
+            data.attachments.forEach { container.attachmentDao.insert(it) }
+            data.sessionAttachments.forEach { container.attachmentDao.bind(it) }
         }
 
         // 接口配置恢复（密钥除外，需用户重填）
@@ -218,14 +253,16 @@ class BackupManager(
             quizzes = data.quizzes.size,
             notes = data.notes.size,
             textbooks = data.textbooks.size,
-            pictures = pictures
+            pictures = pictures,
+            documents = data.attachments.size
         )
     }
 
     companion object {
-        const val BACKUP_SCHEMA_VERSION = 1
+        const val BACKUP_SCHEMA_VERSION = 2
         const val ENTRY_DATA = "backup.json"
         const val PICTURES_DIR = "pictures"
+        const val ATTACHMENTS_DIR = "attachments"
         const val MIME_ZIP = "application/zip"
 
         fun suggestedFileName(): String {

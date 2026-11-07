@@ -29,6 +29,7 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.KeyboardArrowRight
@@ -37,9 +38,13 @@ import androidx.compose.material.icons.automirrored.outlined.ShowChart
 import androidx.compose.material.icons.outlined.Add
 import androidx.compose.material.icons.outlined.Check
 import androidx.compose.material.icons.outlined.Close
+import androidx.compose.material.icons.outlined.Description
+import androidx.compose.material.icons.outlined.EditNote
 import androidx.compose.material.icons.outlined.Functions
 import androidx.compose.material.icons.outlined.History
 import androidx.compose.material.icons.outlined.Image
+import androidx.compose.material.icons.outlined.Quiz
+import androidx.compose.material.icons.outlined.School
 import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material.icons.outlined.Tune
 import androidx.compose.material3.CircularProgressIndicator
@@ -79,6 +84,8 @@ import com.ueiol.yixue.ui.common.YxActionChip
 import com.ueiol.yixue.ui.common.YxAttachmentBubble
 import com.ueiol.yixue.ui.common.YxLargeTitle
 import com.ueiol.yixue.ui.common.MarkdownBlock
+import com.ueiol.yixue.data.attachment.AttachmentStore
+import com.ueiol.yixue.data.attachment.typeLabel
 import com.ueiol.yixue.ui.formula.FormulaEditorDialog
 import com.ueiol.yixue.ui.navigation.LocalScaffoldPadding
 import com.ueiol.yixue.ui.plot.PlotViewerActivity
@@ -101,7 +108,7 @@ fun ChatPage(
     val messages by vm.messages.collectAsState(initial = emptyList())
     val streamingText by vm.streamingText.collectAsState()
     val error by vm.error.collectAsState()
-    val toolActivity by vm.toolActivity.collectAsState()
+    val toolSteps by vm.toolSteps.collectAsState()
     val quizSummaries by vm.quizSummaries.collectAsState()
     val currentSessionId by vm.currentSessionId.collectAsState()
     val listState = rememberLazyListState()
@@ -109,11 +116,11 @@ fun ChatPage(
     var jumpedForSession by remember { mutableStateOf<Long?>(null) }
 
     LaunchedEffect(currentSessionId) { jumpedForSession = null }
-    // 只在内容条数变化（新消息/工具行/流式气泡出现消失）时触发，不随每个 token 重启
-    LaunchedEffect(messages.size, toolActivity, streamingText != null) {
+    // 只在内容条数变化（新消息/步骤时间线/流式气泡出现消失）时触发，不随每个 token 重启
+    LaunchedEffect(messages.size, toolSteps, streamingText != null) {
         val count = messages.size +
-            (if (streamingText != null && toolActivity == null) 1 else 0) +
-            (if (toolActivity != null) 1 else 0)
+            (if (toolSteps.isNotEmpty()) 1 else 0) +
+            (if (streamingText != null) 1 else 0)
         if (count <= 0) return@LaunchedEffect
         // scrollToItem(index) 只把该项顶端对齐视口顶；带上大 scrollOffset 会在测量阶段
         // 被 clamp 到列表最大滚动位置，即最后一项的底部贴住视口底——一次调用直达底部
@@ -133,7 +140,7 @@ fun ChatPage(
         snapshotFlow { streamingText?.length ?: 0 }.collectLatest {
             if (streamingText == null) return@collectLatest
             val count = messages.size +
-                (if (toolActivity == null) 1 else 0)
+                (if (toolSteps.isNotEmpty()) 1 else 0)
             val lastVisible = listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: 0
             if (lastVisible >= count - 2) {
                 listState.scrollToItem(count - 1, 1_000_000)
@@ -209,11 +216,15 @@ fun ChatPage(
                         )
                     }
                 }
-                toolActivity?.let { activity ->
-                    item(key = "tool") { ToolActivityRow(activity) }
+                // 工具调用时间线：每个工具一行，转圈→打勾，像其他家一样展示处理过程
+                if (toolSteps.isNotEmpty()) {
+                    item(key = "steps") {
+                        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                            toolSteps.forEach { step -> ToolStepRow(step) }
+                        }
+                    }
                 }
-                // 工具执行中先不显示空的流式气泡，避免和工具状态重复
-                streamingText?.takeIf { toolActivity == null }?.let { partial ->
+                streamingText?.let { partial ->
                     item(key = "streaming") { AssistantBubble(partial.ifEmpty { "……" }, streaming = true) }
                 }
             }
@@ -249,16 +260,21 @@ private fun MessageBubble(
     onOpenQuiz: (Long) -> Unit,
     onOpenResult: (Long) -> Unit = {}
 ) {
-    // 解析图片附件
-    val images = remember(msg.id) {
+    // 解析附件：图片（data URL）与文档引用（doc: 前缀）分流
+    val entries = remember(msg.id) {
         msg.attachmentsJson?.let {
             runCatching {
                 com.ueiol.yixue.domain.model.AppJson.decodeFromString(com.ueiol.yixue.domain.model.StringListSerializer, it)
             }.getOrDefault(emptyList())
         } ?: emptyList()
     }
+    val images = entries.filterNot { it.startsWith("doc:") }
+    val docRefs = entries.filter { it.startsWith("doc:") }.map { entry ->
+        val parts = entry.removePrefix("doc:").split('|')
+        Triple(parts.getOrElse(0) { "" }, parts.getOrElse(1) { "文档" }, parts.getOrElse(2) { "" })
+    }
     if (msg.role == "user") {
-        UserBubble(msg.content, images)
+        UserBubble(msg.content, images, docRefs)
     } else {
         AssistantBubble(
             text = msg.content,
@@ -271,9 +287,9 @@ private fun MessageBubble(
     }
 }
 
-/** Agent 工具执行中：让用户看到「正在生成练习」而不是干等。 */
+/** Agent 工具调用时间线：每个工具一行，执行中转圈、完成打勾，让用户看到处理过程。 */
 @Composable
-private fun ToolActivityRow(activity: ToolActivity) {
+private fun ToolStepRow(step: ToolStep) {
     Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
         Surface(
             color = MaterialTheme.colorScheme.surfaceContainerLow,
@@ -283,21 +299,36 @@ private fun ToolActivityRow(activity: ToolActivity) {
                 modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                CircularProgressIndicator(
-                    modifier = Modifier.size(14.dp),
-                    strokeWidth = 2.dp,
-                    color = MaterialTheme.colorScheme.primary
-                )
+                if (step.running) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(14.dp),
+                        strokeWidth = 2.dp,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                } else {
+                    Icon(
+                        Icons.Outlined.Check,
+                        contentDescription = "已完成",
+                        modifier = Modifier.size(14.dp),
+                        tint = MaterialTheme.colorScheme.primary
+                    )
+                }
                 Spacer(Modifier.size(8.dp))
                 Icon(
-                    Icons.Outlined.Functions,
-                    contentDescription = activity.name,
+                    imageVector = when (step.name) {
+                        ChatViewModel.TOOL_QUIZ -> Icons.Outlined.Quiz
+                        ChatViewModel.TOOL_NOTE -> Icons.Outlined.EditNote
+                        ChatViewModel.TOOL_TEXTBOOK -> Icons.Outlined.School
+                        ChatViewModel.TOOL_DOC_SEARCH, ChatViewModel.TOOL_DOC_READ -> Icons.Outlined.Description
+                        else -> Icons.Outlined.Functions
+                    },
+                    contentDescription = step.name,
                     modifier = Modifier.size(14.dp),
                     tint = MaterialTheme.colorScheme.primary
                 )
                 Spacer(Modifier.size(6.dp))
                 Text(
-                    text = activity.label,
+                    text = step.label,
                     style = MaterialTheme.typography.labelMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -364,7 +395,11 @@ private fun QuizMessageCard(quizId: Long, quiz: QuizSummary?, onClick: () -> Uni
 }
 
 @Composable
-private fun UserBubble(text: String, images: List<String> = emptyList()) {
+private fun UserBubble(
+    text: String,
+    images: List<String> = emptyList(),
+    docRefs: List<Triple<String, String, String>> = emptyList()
+) {
     // 用户消息里可能带自己插入的 ```plot 代码块：抽出来渲染成函数图，其余文本正常显示
     val plotSpecs = remember(text) {
         Regex("```plot\\s*\\n([\\s\\S]*?)```").findAll(text)
@@ -391,6 +426,26 @@ private fun UserBubble(text: String, images: List<String> = emptyList()) {
                         contentDescription = "图片",
                         modifier = Modifier.fillMaxWidth().padding(bottom = 6.dp)
                     )
+                }
+                docRefs.forEach { (id, name, type) ->
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.padding(bottom = 4.dp)
+                    ) {
+                        Icon(
+                            Icons.Outlined.Description,
+                            contentDescription = null,
+                            modifier = Modifier.size(14.dp),
+                            tint = MaterialTheme.colorScheme.onPrimaryContainer
+                        )
+                        Spacer(Modifier.size(4.dp))
+                        Text(
+                            text = name,
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.onPrimaryContainer,
+                            maxLines = 1
+                        )
+                    }
                 }
                 val context = LocalContext.current
                 plotSpecs.forEach { spec ->
@@ -430,14 +485,10 @@ private fun AssistantBubble(
             modifier = Modifier.widthIn(max = 320.dp)
         ) {
             Column(modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp)) {
-                // 流式期间渲染纯文本：MarkdownParser 是整段重解析，每个 token 都跑一遍 O(n²)；
-                // 回复完成后整段走 MarkdownBlock 渲染
+                // 流式期间同样走 MarkdownBlock：VM 已把刷新节流到 ~120ms 一帧，
+                // 重解析成本可控，换来输出过程中的实时格式化（公式/表格/代码块即时成型）
                 if (streaming) {
-                    Text(
-                        text = text + " ▍",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurface
-                    )
+                    MarkdownBlock(text = text + " ▍")
                 } else {
                     MarkdownBlock(text = text)
                 }
@@ -471,10 +522,17 @@ private fun ChatInputBar(
     var showModelSwitcher by remember { mutableStateOf(false) }
     val pendingImage by vm.pendingImage.collectAsState()
     val pendingReport by vm.pendingReport.collectAsState()
+    val sessionDocs by vm.sessionDocs.collectAsState()
+    val docLibrary by vm.docLibrary.collectAsState()
+    var showDocPicker by remember { mutableStateOf(false) }
     val focusManager = LocalFocusManager.current
 
     val imagePicker = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
         if (uri != null) vm.attachImage(uri)
+    }
+
+    val docPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri != null) vm.importDocument(uri, null, "")
     }
 
     fun insertAtCursor(insert: String) {
@@ -487,8 +545,8 @@ private fun ChatInputBar(
 
     Surface(color = MaterialTheme.colorScheme.surfaceContainerLowest) {
         Column(modifier = Modifier.fillMaxWidth()) {
-            // 附件气泡区：答题报告 / 图片（未来的文件同格式），胶囊统一视觉，可单独移除
-            if (pendingReport != null || pendingImage != null) {
+            // 附件气泡区：会话文档（X=解绑）/ 答题报告 / 待发图片，胶囊统一视觉
+            if (sessionDocs.isNotEmpty() || pendingReport != null || pendingImage != null) {
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -497,6 +555,35 @@ private fun ChatInputBar(
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
+                    sessionDocs.forEach { doc ->
+                        YxAttachmentBubble(
+                            title = when (doc.status) {
+                                AttachmentStore.STATUS_PROCESSING -> "${doc.name} · 解析中"
+                                AttachmentStore.STATUS_FAILED -> "${doc.name} · 解析失败"
+                                else -> doc.name
+                            },
+                            onRemove = { vm.unbindDocument(doc.id) },
+                            leading = {
+                                Box(
+                                    modifier = Modifier
+                                        .padding(start = 4.dp)
+                                        .size(28.dp)
+                                        .background(
+                                            MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.12f),
+                                            CircleShape
+                                        ),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Icon(
+                                        Icons.Outlined.Description,
+                                        contentDescription = null,
+                                        modifier = Modifier.size(14.dp),
+                                        tint = MaterialTheme.colorScheme.onPrimaryContainer
+                                    )
+                                }
+                            }
+                        )
+                    }
                     pendingReport?.let {
                         YxAttachmentBubble(
                             title = "答题报告",
@@ -537,6 +624,149 @@ private fun ChatInputBar(
                                 )
                             }
                         )
+                    }
+                }
+            }
+            // 文档选择弹窗：本会话已启用（点击解绑）/ 文档库（点击绑入）/ 上传新文件
+            if (showDocPicker) {
+                Dialog(onDismissRequest = { showDocPicker = false }) {
+                    Surface(color = MaterialTheme.colorScheme.surface, shape = YxSheetShape, modifier = Modifier.fillMaxWidth()) {
+                        Column(
+                            modifier = Modifier
+                                .padding(16.dp)
+                                .heightIn(max = 440.dp)
+                                .verticalScroll(rememberScrollState())
+                        ) {
+                            Text(
+                                "文档",
+                                style = MaterialTheme.typography.titleLarge,
+                                color = MaterialTheme.colorScheme.onSurface
+                            )
+                            Spacer(Modifier.height(4.dp))
+                            Text(
+                                "启用的文档 AI 可以随时检索和阅读；删除会话会连文档一起删除",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            Spacer(Modifier.height(10.dp))
+                            Text(
+                                "本对话已启用",
+                                style = MaterialTheme.typography.labelLarge,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            if (sessionDocs.isEmpty()) {
+                                Text(
+                                    "还没有启用文档",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.padding(vertical = 8.dp)
+                                )
+                            }
+                            sessionDocs.forEach { doc ->
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clickable { vm.unbindDocument(doc.id) }
+                                        .padding(vertical = 10.dp)
+                                ) {
+                                    Icon(
+                                        Icons.Outlined.Description,
+                                        contentDescription = null,
+                                        tint = MaterialTheme.colorScheme.primary,
+                                        modifier = Modifier.size(18.dp)
+                                    )
+                                    Spacer(Modifier.size(10.dp))
+                                    Column(Modifier.weight(1f)) {
+                                        Text(
+                                            doc.name,
+                                            style = MaterialTheme.typography.bodyLarge,
+                                            color = MaterialTheme.colorScheme.onSurface,
+                                            maxLines = 1
+                                        )
+                                        Text(
+                                            when (doc.status) {
+                                                AttachmentStore.STATUS_PROCESSING -> "解析中…"
+                                                AttachmentStore.STATUS_FAILED -> "解析失败：${doc.errorMsg ?: "未知原因"}"
+                                                else -> doc.typeLabel()
+                                            },
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                    }
+                                    Icon(
+                                        Icons.Outlined.Check,
+                                        contentDescription = "点击移除",
+                                        tint = MaterialTheme.colorScheme.primary,
+                                        modifier = Modifier.size(18.dp)
+                                    )
+                                }
+                            }
+                            Spacer(Modifier.height(8.dp))
+                            Text(
+                                "文档库",
+                                style = MaterialTheme.typography.labelLarge,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            val libraryOthers = docLibrary.filter { lib -> sessionDocs.none { it.id == lib.id } }
+                            if (libraryOthers.isEmpty()) {
+                                Text(
+                                    if (docLibrary.isEmpty()) "库还是空的，从下面上传第一个文件吧" else "库里的文档都已启用",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.padding(vertical = 8.dp)
+                                )
+                            }
+                            libraryOthers.forEach { doc ->
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clickable { vm.bindDocument(doc.id) }
+                                        .padding(vertical = 10.dp)
+                                ) {
+                                    Icon(
+                                        Icons.Outlined.Description,
+                                        contentDescription = null,
+                                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        modifier = Modifier.size(18.dp)
+                                    )
+                                    Spacer(Modifier.size(10.dp))
+                                    Column(Modifier.weight(1f)) {
+                                        Text(
+                                            doc.name,
+                                            style = MaterialTheme.typography.bodyLarge,
+                                            color = MaterialTheme.colorScheme.onSurface,
+                                            maxLines = 1
+                                        )
+                                        Text(
+                                            when (doc.status) {
+                                                AttachmentStore.STATUS_PROCESSING -> "解析中…"
+                                                AttachmentStore.STATUS_FAILED -> "解析失败：${doc.errorMsg ?: "未知原因"}"
+                                                else -> doc.typeLabel()
+                                            },
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                    }
+                                    Icon(
+                                        Icons.Outlined.Add,
+                                        contentDescription = "点击启用",
+                                        tint = MaterialTheme.colorScheme.primary,
+                                        modifier = Modifier.size(18.dp)
+                                    )
+                                }
+                            }
+                            Spacer(Modifier.height(12.dp))
+                            YxPill(
+                                text = "上传新文件（Word / PPT / Excel / PDF）",
+                                primary = true,
+                                height = 44.dp,
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                docPicker.launch(com.ueiol.yixue.data.attachment.AttachmentExtractor.SUPPORTED_MIME)
+                            }
+                        }
                     }
                 }
             }
@@ -593,6 +823,11 @@ private fun ChatInputBar(
                 ) {
                     YxActionChip(icon = Icons.Outlined.Image, text = "图片") {
                         imagePicker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
+                        showPanel = false
+                    }
+                    YxActionChip(icon = Icons.Outlined.Description, text = "文档") {
+                        focusManager.clearFocus()
+                        showDocPicker = true
                         showPanel = false
                     }
                     YxActionChip(icon = Icons.Outlined.Functions, text = "公式") {

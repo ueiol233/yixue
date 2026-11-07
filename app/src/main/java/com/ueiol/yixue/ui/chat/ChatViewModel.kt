@@ -9,6 +9,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.ueiol.yixue.YixueApp
 import com.ueiol.yixue.data.ai.OpenAiClient
+import com.ueiol.yixue.data.attachment.AttachmentStore
 import com.ueiol.yixue.data.db.NoteDao
 import com.ueiol.yixue.data.db.NoteEntity
 import com.ueiol.yixue.data.db.QuizSummary
@@ -48,8 +49,8 @@ import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 
-/** 工具调用状态：name = 工具名，label = 展示给用户的一句话。 */
-data class ToolActivity(val name: String, val label: String)
+/** 工具调用步骤：流式过程中逐个展示每个工具的执行状态（转圈→打勾）。 */
+data class ToolStep(val id: Int, val name: String, val label: String, val running: Boolean)
 
 class ChatViewModel(
     private val repo: ChatRepository,
@@ -63,6 +64,9 @@ class ChatViewModel(
     private val isConfigured: () -> Boolean
 ) : ViewModel() {
 
+    /** 对话文档库（AppContainer 单例）。 */
+    private val attachmentStore get() = app.container.attachmentStore
+
     /** 主页「+」里切换模型用。 */
     val settingsStore: com.ueiol.yixue.data.settings.SettingsStore get() = app.container.settings
 
@@ -75,6 +79,19 @@ class ChatViewModel(
     val messages = _currentSessionId
         .flatMapLatest { id -> if (id == null) flowOf(emptyList()) else repo.observeMessages(id) }
 
+    /** 本会话绑定的文档（输入框胶囊区显示；也是 AI 工具可访问的范围）。 */
+    val sessionDocs: StateFlow<List<com.ueiol.yixue.data.db.AttachmentEntity>> = _currentSessionId
+        .flatMapLatest { id ->
+            if (id == null) flowOf(emptyList())
+            else app.container.attachmentDao.observeAttachmentsOfSession(id)
+        }
+        .stateIn(viewModelScope, SharingStarted.Lazily, emptyList())
+
+    /** 全局文档库（文档选择页 / 管理页用）。 */
+    val docLibrary: StateFlow<List<com.ueiol.yixue.data.db.AttachmentEntity>> =
+        app.container.attachmentDao.observeAll()
+            .stateIn(viewModelScope, SharingStarted.Lazily, emptyList())
+
     /** 非空表示正在流式接收 */
     private val _streamingText = MutableStateFlow<String?>(null)
     val streamingText: StateFlow<String?> = _streamingText
@@ -84,9 +101,21 @@ class ChatViewModel(
 
     // ---------- Agent 工具：generate_quiz ----------
 
-    /** 工具调用进行中的状态（聊天页展示"正在做什么"）。 */
-    private val _toolActivity = MutableStateFlow<ToolActivity?>(null)
-    val toolActivity: StateFlow<ToolActivity?> = _toolActivity
+    /** 本次回复的工具调用步骤（新消息发送时清空）。 */
+    private val _toolSteps = MutableStateFlow<List<ToolStep>>(emptyList())
+    val toolSteps: StateFlow<List<ToolStep>> = _toolSteps
+
+    private var stepSeq = 0
+
+    private fun beginStep(name: String, label: String): Int {
+        val id = ++stepSeq
+        _toolSteps.value = _toolSteps.value + ToolStep(id, name, label, running = true)
+        return id
+    }
+
+    private fun endStep(id: Int) {
+        _toolSteps.value = _toolSteps.value.map { if (it.id == id) it.copy(running = false) else it }
+    }
 
     /** 会话中练习卡片所需的试卷汇总（按 id 索引）。 */
     val quizSummaries: StateFlow<Map<Long, QuizSummary>> = quizRepo.observeSummaries()
@@ -97,6 +126,8 @@ class ChatViewModel(
         const val TOOL_QUIZ = "generate_quiz"
         const val TOOL_NOTE = "append_note"
         const val TOOL_TEXTBOOK = "search_textbook"
+        const val TOOL_DOC_SEARCH = "search_attachment"
+        const val TOOL_DOC_READ = "read_attachment"
 
         val quizTool = ToolDef(
             function = ToolFunction(
@@ -141,6 +172,38 @@ class ChatViewModel(
                       "subject":{"type":"string","description":"科目名，如 数学/物理/英语"},
                       "query":{"type":"string","description":"要检索的关键词或短语（2-10 字，尽量精准）"}
                     },"required":["subject","query"]}
+                    """.trimIndent()
+                )
+            )
+        )
+
+        val docSearchTool = ToolDef(
+            function = ToolFunction(
+                name = TOOL_DOC_SEARCH,
+                description = "在用户上传的文档（Word/PPT/Excel/PDF）中搜索关键词。返回每一处命中的位置（页/幻灯片/工作表/内容块）和前后文片段。想确认文档里有没有某内容、或定位某概念在哪一页时调用；关键词要精准。",
+                parameters = Json.parseToJsonElement(
+                    """
+                    {"type":"object","properties":{
+                      "file_id":{"type":"string","description":"文档 ID，见系统提示中「本对话启用的文档」清单"},
+                      "keyword":{"type":"string","description":"要搜索的关键词或短语"},
+                      "max_hits":{"type":"integer","description":"最多返回几处命中，默认 10"}
+                    },"required":["file_id","keyword"]}
+                    """.trimIndent()
+                )
+            )
+        )
+
+        val docReadTool = ToolDef(
+            function = ToolFunction(
+                name = TOOL_DOC_READ,
+                description = "读取用户上传文档的指定部分。PDF 按页、PPT 按幻灯片页、Excel 按工作表、Word 按内容块（单位见系统提示清单）。不传 page 则从全文开头读取。单次最多约 4000 字符，未读完会提示续读位置。",
+                parameters = Json.parseToJsonElement(
+                    """
+                    {"type":"object","properties":{
+                      "file_id":{"type":"string","description":"文档 ID"},
+                      "page":{"type":"integer","description":"要读取的页码/幻灯片序号/工作表序号/内容块编号（从 1 开始）"},
+                      "start":{"type":"integer","description":"不指定 page 时，从全文第几个字符开始读（用于续读，上次返回会给出位置）"}
+                    },"required":["file_id"]}
                     """.trimIndent()
                 )
             )
@@ -228,6 +291,8 @@ class ChatViewModel(
     fun deleteSession(session: SessionEntity) {
         viewModelScope.launch {
             repo.deleteSession(session)
+            // 用户要求：删会话连文档一起删；仍被其他会话引用的只解绑
+            attachmentStore.onSessionDeleted(session.id)
             if (_currentSessionId.value == session.id) _currentSessionId.value = null
         }
     }
@@ -285,6 +350,40 @@ class ChatViewModel(
 
     fun clearPendingImage() { _pendingImage.value = null }
 
+    // ---------- 对话文档库 ----------
+
+    /** 上传并解析新文档，解析完自动绑到当前会话。 */
+    fun importDocument(uri: Uri, displayName: String?, mime: String) {
+        viewModelScope.launch {
+            val sid = _currentSessionId.value ?: repo.createSession().also { _currentSessionId.value = it }
+            val id = attachmentStore.import(uri, displayName, mime)
+            if (id == null) {
+                _error.value = "不支持的文件类型，支持 Word / PPT / Excel / PDF"
+                return@launch
+            }
+            attachmentStore.bindToSession(sid, id)
+        }
+    }
+
+    /** 把库里已有文档绑到当前会话（复用已解析结果，秒贴）。 */
+    fun bindDocument(attachmentId: String) {
+        viewModelScope.launch {
+            val sid = _currentSessionId.value ?: repo.createSession().also { _currentSessionId.value = it }
+            attachmentStore.bindToSession(sid, attachmentId)
+        }
+    }
+
+    /** 解绑：只移除本会话引用，文件仍在文档库。 */
+    fun unbindDocument(attachmentId: String) {
+        val sid = _currentSessionId.value ?: return
+        viewModelScope.launch { attachmentStore.unbindFromSession(sid, attachmentId) }
+    }
+
+    /** 解析失败的文档重试。 */
+    fun retryParse(attachmentId: String) {
+        viewModelScope.launch { attachmentStore.parse(attachmentId) }
+    }
+
     // ---------- Agent 对话循环 ----------
 
     fun send(text: String) = sendWithImages(text, emptyList())
@@ -312,12 +411,15 @@ class ChatViewModel(
                 val images = if (externalImages.isEmpty()) listOfNotNull(_pendingImage.value?.dataUrl) else externalImages
                 _pendingImage.value = null
                 _pendingReport.value = null
-                repo.addUserMessage(sessionId, body, images)
+                // 发送时把会话已绑定的文档记到这条消息上（聊天气泡徽标展示用）
+                val boundDocs = attachmentStore.boundTo(sessionId)
+                repo.addUserMessage(sessionId, body, images, boundDocs.map { "doc:${it.id}|${it.name}|${it.type}" })
                 _streamingText.value = ""
+                _toolSteps.value = emptyList()
 
                 val apiMsgs = ArrayList<ApiMessage>()
                 // 教材上下文：告诉 AI 用户导入了哪些教材、是否与学生所用版本一致
-                apiMsgs += ChatMessage("system", Prompts.CHAT_SYSTEM + textbookContext()).toApiMessage()
+                apiMsgs += ChatMessage("system", Prompts.CHAT_SYSTEM + textbookContext() + attachmentContext(boundDocs)).toApiMessage()
                 repo.historyMessages(sessionId).forEach { m ->
                     apiMsgs += ChatMessage(m.role, m.content, repo.attachmentsOf(m)).toApiMessage()
                 }
@@ -326,59 +428,87 @@ class ChatViewModel(
                 var finalText: String? = null
                 var quizIdForReply: Long? = null
                 var round = 0
+                // 流式文本本地累积 + 节流刷新：MarkdownBlock 每次整段重解析，
+                // 每 token 刷一次是 O(n²)，节流到 ~120ms 一帧既流畅又便宜
+                val full = StringBuilder()
+                var lastFlushAt = 0L
+                fun flushStreaming(force: Boolean = false) {
+                    val now = System.currentTimeMillis()
+                    if (force || now - lastFlushAt >= 120) {
+                        _streamingText.value = full.toString()
+                        lastFlushAt = now
+                    }
+                }
                 try {
                     while (finalText == null && round < 3) {
                         round++
-                        val result = aiClient.streamApi(apiMsgs, tools = listOf(quizTool, noteTool, textbookTool)) { delta ->
-                            _streamingText.value = (_streamingText.value ?: "") + delta
+                        // 有绑定的文档才暴露文档工具，避免无文档时模型空转调用
+                        val tools = buildList {
+                            add(quizTool); add(noteTool); add(textbookTool)
+                            if (boundDocs.isNotEmpty()) { add(docSearchTool); add(docReadTool) }
+                        }
+                        val result = aiClient.streamApi(apiMsgs, tools = tools) { delta ->
+                            full.append(delta)
+                            flushStreaming()
                         }
                         if (!result.hasToolCalls) {
                             finalText = result.content
                             break
                         }
+                        // 工具调用轮的增量不进入正文，下一轮回答从空白开始
+                        full.clear()
+                        flushStreaming(force = true)
                         apiMsgs += assistantToolCallMessage(
                             result.toolCalls.map { ApiToolCall(it.id, "function", ApiFuncCall(it.name, it.arguments)) }
                         )
                         for (tc in result.toolCalls) {
+                            val stepId = beginStep(tc.name, stepRunningLabel(tc.name, tc.arguments))
                             val toolResult = when (tc.name) {
                                 TOOL_QUIZ -> {
-                                    _toolActivity.value = ToolActivity(TOOL_QUIZ, "正在生成练习…")
                                     val (message, quizId) = executeQuizTool(tc.arguments)
                                     if (quizId != null) quizIdForReply = quizId
-                                    _toolActivity.value = null
                                     message
                                 }
-                                TOOL_NOTE -> {
-                                    _toolActivity.value = ToolActivity(TOOL_NOTE, "正在写入笔记…")
-                                    val message = executeNoteTool(tc.arguments)
-                                    _toolActivity.value = null
-                                    message
-                                }
-                                TOOL_TEXTBOOK -> {
-                                    _toolActivity.value = ToolActivity(TOOL_TEXTBOOK, "正在翻教材…")
-                                    val message = executeTextbookSearchTool(tc.arguments)
-                                    _toolActivity.value = null
-                                    message
-                                }
+                                TOOL_NOTE -> executeNoteTool(tc.arguments)
+                                TOOL_TEXTBOOK -> executeTextbookSearchTool(tc.arguments)
+                                TOOL_DOC_SEARCH -> executeDocSearchTool(tc.arguments)
+                                TOOL_DOC_READ -> executeDocReadTool(tc.arguments)
                                 else -> "未知工具：${tc.name}"
                             }
+                            endStep(stepId)
                             apiMsgs += toolResultMessage(tc.id, toolResult)
                         }
-                        _streamingText.value = (_streamingText.value ?: "") + "\n\n"
                     }
                 } finally {
-                    _toolActivity.value = null
+                    // 强制把已累积内容刷出去，避免最后一帧被节流吞掉
+                    flushStreaming(force = true)
                 }
 
                 val reply = finalText ?: "（工具调用轮次已达上限）"
                 // 把试卷挂在这条回复上，聊天页据此渲染练习卡片
                 repo.addAssistantMessage(sessionId, reply.trim(), quizIdForReply)
                 _streamingText.value = null
+                _toolSteps.value = emptyList()
             } catch (t: Throwable) {
                 _error.value = t.message ?: "请求失败"
                 _streamingText.value = null
             }
         }
+    }
+
+    /** 步骤时间线的「执行中」文案；文档工具带上文件名让用户知道在操作哪份。 */
+    private suspend fun stepRunningLabel(toolName: String, argsJson: String): String = when (toolName) {
+        TOOL_QUIZ -> "正在生成练习…"
+        TOOL_NOTE -> "正在写入笔记…"
+        TOOL_TEXTBOOK -> "正在翻教材…"
+        TOOL_DOC_SEARCH, TOOL_DOC_READ -> {
+            val fileId = runCatching {
+                (Json.parseToJsonElement(argsJson).jsonObject["file_id"] as? JsonPrimitive)?.content
+            }.getOrNull() ?: ""
+            val docName = fileId.takeIf { it.isNotEmpty() }?.let { attachmentStore.getById(it)?.name }
+            if (docName != null) "正在查阅《$docName》…" else "正在查阅文档…"
+        }
+        else -> "正在处理…"
     }
 
     /** 执行出题工具：生成试卷 → 入库，返回（给模型的结果文本, 试卷 id）。 */
@@ -435,6 +565,105 @@ class ChatViewModel(
         } catch (t: Throwable) {
             "教材检索失败：${t.message ?: "未知错误"}"
         }
+    }
+
+    /** 执行文档搜索工具：在本会话绑定的文档中检索关键词。 */
+    private suspend fun executeDocSearchTool(argsJson: String): String {
+        return try {
+            val obj = Json.parseToJsonElement(argsJson).jsonObject
+            val fileId = ((obj["file_id"] as? JsonPrimitive)?.content ?: "").trim()
+            val keyword = ((obj["keyword"] as? JsonPrimitive)?.content ?: "").trim()
+            val maxHits = ((obj["max_hits"] as? JsonPrimitive)?.content?.toIntOrNull()) ?: 10
+            if (fileId.isEmpty() || keyword.isEmpty()) return "参数不完整：需要 file_id 和 keyword。"
+            val doc = boundDocsSnapshot().firstOrNull { it.id == fileId }
+                ?: return "该文档不在本对话的启用清单中，可用清单见系统提示。"
+            val att = attachmentStore.getById(fileId)
+                ?: return "文档不存在（可能已被用户删除）。"
+            if (att.status == AttachmentStore.STATUS_PROCESSING) {
+                return "文档「${att.name}」还在解析中，请稍后再试或告知用户。"
+            }
+            if (att.status == AttachmentStore.STATUS_FAILED) {
+                return "文档「${att.name}」解析失败（${att.errorMsg ?: "未知原因"}），无法检索。"
+            }
+            val hits = attachmentStore.search(fileId, keyword, maxHits.coerceIn(1, 20))
+            if (hits.isEmpty()) {
+                "在「${att.name}」中未找到「$keyword」。请换更短或不同的关键词再试。"
+            } else {
+                buildString {
+                    append("在《${att.name}》中找到 ${hits.size} 处「$keyword」（引用时说明出自该文档及位置）：\n")
+                    hits.forEach { append("[${it.label}] ${it.snippet}\n") }
+                }
+            }
+        } catch (t: Throwable) {
+            "文档检索失败：${t.message ?: "未知错误"}"
+        }
+    }
+
+    /** 执行文档读取工具：按页/幻灯片/工作表/内容块读取，或从头按段续读。 */
+    private suspend fun executeDocReadTool(argsJson: String): String {
+        return try {
+            val obj = Json.parseToJsonElement(argsJson).jsonObject
+            val fileId = ((obj["file_id"] as? JsonPrimitive)?.content ?: "").trim()
+            val page = (obj["page"] as? JsonPrimitive)?.content?.toIntOrNull()
+            val start = (obj["start"] as? JsonPrimitive)?.content?.toIntOrNull() ?: 0
+            if (fileId.isEmpty()) return "参数不完整：需要 file_id。"
+            boundDocsSnapshot().firstOrNull { it.id == fileId }
+                ?: return "该文档不在本对话的启用清单中，可用清单见系统提示。"
+            val att = attachmentStore.getById(fileId)
+                ?: return "文档不存在（可能已被用户删除）。"
+            if (att.status == AttachmentStore.STATUS_PROCESSING) {
+                return "文档「${att.name}」还在解析中，请稍后再试。"
+            }
+            if (att.status == AttachmentStore.STATUS_FAILED) {
+                return "文档「${att.name}」解析失败（${att.errorMsg ?: "未知原因"}），无法读取。"
+            }
+            val result = attachmentStore.read(fileId, page, start)
+                ?: return "读取位置无效：文档「${att.name}」共 ${att.unitCount} 个分页单位，请确认 page 在 1-${att.unitCount} 之间。"
+            buildString {
+                append("《${att.name}》 [${result.unitLabel}]")
+                if (result.unitIndex == null) {
+                    append("（全文共 ${result.totalChars} 字符，从第 $start 字符起）")
+                    if (start + AttachmentStore.MAX_READ_CHARS < result.totalChars) {
+                        append("；未读完，可用 start=${start + AttachmentStore.MAX_READ_CHARS} 续读")
+                    }
+                } else if (result.totalChars > AttachmentStore.MAX_READ_CHARS) {
+                    append("（本段共 ${result.totalChars} 字符，已截断）")
+                }
+                append("\n")
+                append(result.text)
+            }
+        } catch (t: Throwable) {
+            "文档读取失败：${t.message ?: "未知错误"}"
+        }
+    }
+
+    /** 当前会话绑定文档快照（工具执行时校验范围用）。 */
+    private suspend fun boundDocsSnapshot(): List<com.ueiol.yixue.data.db.AttachmentEntity> {
+        val sid = _currentSessionId.value ?: return emptyList()
+        return attachmentStore.boundTo(sid)
+    }
+
+    /** 本会话文档清单上下文：只注入清单不注入正文，模型按需用工具取内容。 */
+    private fun attachmentContext(docs: List<com.ueiol.yixue.data.db.AttachmentEntity>): String {
+        if (docs.isEmpty()) return ""
+        return buildString {
+            append("\n\n【本对话启用的文档】用户上传了以下文档，可用 search_attachment 检索关键词、read_attachment 按页读取，回答引用到文档内容时注明出自《文档名》与位置：\n")
+            docs.forEach { d ->
+                val unitName = when (d.type) {
+                    "PPTX" -> "张幻灯片"; "XLSX" -> "个工作表"; "DOCX" -> "个内容块"; else -> "页"
+                }
+                val state = when (d.status) {
+                    AttachmentStore.STATUS_READY -> "${d.unitCount} $unitName"
+                    AttachmentStore.STATUS_PROCESSING -> "解析中"
+                    else -> "解析失败"
+                }
+                append("[${d.id}] ${d.name}（${typeLabel(d.type)}，$state）\n")
+            }
+        }
+    }
+
+    private fun typeLabel(type: String) = when (type) {
+        "DOCX" -> "Word"; "PPTX" -> "PPT"; "XLSX" -> "Excel"; "PDF" -> "PDF"; else -> type
     }
 
     /**

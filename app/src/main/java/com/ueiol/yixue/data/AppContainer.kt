@@ -37,8 +37,14 @@ class AppContainer(context: Context) {
     val wrongQuestionDao get() = database.wrongQuestionDao()
     val noteDao get() = database.noteDao()
     val textbookDao get() = database.textbookDao()
+    val attachmentDao get() = database.attachmentDao()
 
     val textbookImporter: TextbookImporter by lazy { TextbookImporter(appContext) }
+
+    /** 对话文档库：上传/解析/搜索/读取/会话绑定。 */
+    val attachmentStore: com.ueiol.yixue.data.attachment.AttachmentStore by lazy {
+        com.ueiol.yixue.data.attachment.AttachmentStore(appContext, database.attachmentDao())
+    }
 
     val chatRepository: ChatRepository by lazy {
         ChatRepository(sessionDao, messageDao) { block ->
