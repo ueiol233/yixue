@@ -80,14 +80,23 @@ fun NoteEditorPage(
     val scope = rememberCoroutineScope()
     val focusManager = LocalFocusManager.current
 
-    // 全局搜索跳转：直接进编辑态并选中命中处（TextField 会把光标滚入视野）
-    var jumpSelection by remember { mutableStateOf<TextRange?>(null) }
+    // 正文输入框用受控 TextFieldValue：光标/选区由用户自由移动，
+    // 只在「VM 内容变化」（加载/插入图片公式/搜索跳转）时同步，避免重组把光标拉回末尾
+    var fieldValue by remember { mutableStateOf(TextFieldValue("")) }
     val jumpFocusRequester = remember { FocusRequester() }
+
+    LaunchedEffect(content) {
+        if (fieldValue.text != content) {
+            fieldValue = TextFieldValue(content, selection = TextRange(content.length))
+        }
+    }
+
+    // 全局搜索跳转：内容加载后选中命中处并聚焦（TextField 会把光标滚入视野）
     LaunchedEffect(content, jumpOffset) {
-        if (jumpSelection == null && jumpOffset >= 0 && content.isNotEmpty()) {
+        if (jumpOffset >= 0 && content.isNotEmpty()) {
             val end = minOf(content.length, jumpOffset + jumpLen.coerceAtLeast(0))
             val start = jumpOffset.coerceIn(0, content.length)
-            jumpSelection = TextRange(start, end)
+            fieldValue = TextFieldValue(content, selection = TextRange(start, end))
             jumpFocusRequester.requestFocus()
         }
     }
@@ -176,11 +185,10 @@ fun NoteEditorPage(
             }
         } else {
             OutlinedTextField(
-                value = jumpSelection?.let { TextFieldValue(content, selection = it) }
-                    ?: TextFieldValue(content, selection = TextRange(content.length)),
+                value = fieldValue,
                 onValueChange = {
+                    fieldValue = it
                     vm.onContentChange(it.text)
-                    jumpSelection = null
                 },
                 placeholder = { Text("Markdown 内容…") },
                 modifier = Modifier
